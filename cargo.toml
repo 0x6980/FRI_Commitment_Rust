@@ -1,0 +1,4 @@
+[package]
+name = "FRI_Commitment_Rust"
+version = "0.1.0"
+edition = "2021"
