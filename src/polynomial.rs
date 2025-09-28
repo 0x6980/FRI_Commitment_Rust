@@ -1,10 +1,12 @@
+use crate::field::FieldElement;
+
 #[derive(Debug, Clone)]
 pub struct Polynomial {
     coefficients: Vec<FieldElement>,
 }
 
-iml Polynomial {
-    pub fn new(coefficients: Vec<FieldElement) -> Self {
+impl Polynomial {
+    pub fn new(coefficients: Vec<FieldElement>) -> Self {
         // Remove leading zeros
         let mut coeffs = coefficients;
         while coeffs.len() > 0 && coeffs.last().unwrap().value == 0 {

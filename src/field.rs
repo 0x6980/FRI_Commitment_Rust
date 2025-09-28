@@ -1,11 +1,12 @@
+use std::ops::{Add, Mul};
 
-#[derive(Debug, CLone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct FieldElement {
-    value: u64,
-    modulus: u64,
+    pub value: u64,
+    pub modulus: u64,
 }
 
-iml FieldElement {
+impl FieldElement {
 
     pub fn zero(modulus: u64) -> Self {
         Self { value: 0, modulus: modulus }
@@ -43,17 +44,22 @@ iml FieldElement {
 
 // Implement the arithmetic operations
 // Addition operation if additive group of field
-iml Add for FieldElement {
-    pub fn add(&self, other: Self) -> Self {
+impl Add for FieldElement {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
         assert_eq!(self.modulus, other.modulus);
         Self::new(self.value + other.value, self.modulus)
     }
 }
 
 // Multiplication operation if multiplicative group of field
-iml Mul for FieldElement {
-    pub fn mul(&self, other: Self) -> Self {
+impl Mul for FieldElement {
+    type Output = Self;
+
+    fn mul(self, other: Self) -> Self {
         assert_eq!(self.modulus, other.modulus);
         Self::new(self.value * other.value, self.modulus)
     }
+    
 }
