@@ -25,4 +25,6 @@ impl Polynomial {
             self.coefficients.len() - 1
         }
     }
+
+    pub
 }
