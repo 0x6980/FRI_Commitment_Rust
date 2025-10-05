@@ -10,6 +10,25 @@ pub struct MerkleTree {
 
 impl MerkleTree {
     
+    pub fn new(elements: &[FieldElement]) -> Self {
+        let leaves: Vec<[u8; 32]> = elements.iter()
+            .map(|elem| Self::hash_field_element(elem))
+            .collect();
+        
+        let root = Self::build_tree(&leaves);
+        Self { leaves, root }
+    }
+    
+    fn hash_field_element(elem: &FieldElement) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        
+        // Encode both value and modulus for safety
+        hasher.update(&elem.value.to_le_bytes());
+        hasher.update(&elem.modulus.to_le_bytes());
+        
+        hasher.finalize().into()
+    }
+
     pub fn build_tree(leaves: &[[u8; 32]]) -> [u8; 32] {
         if leaves.len() == 1 {
             return leaves[0];
@@ -33,7 +52,7 @@ impl MerkleTree {
         Self::build_tree(&next_level)
     }
 
-    pub fn get_root(&self) -> &[u8] {
+    pub fn get_root(&self) -> &[u8; 32] {
         &self.root
     }
 }

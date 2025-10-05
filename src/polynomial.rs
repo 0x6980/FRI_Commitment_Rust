@@ -26,5 +26,53 @@ impl Polynomial {
         }
     }
 
-    pub
+    pub fn evaluate(&self, x: FieldElement) -> FieldElement {
+        let mut result = FieldElement::zero(x.modulus);
+        for &coeff in self.coefficients.iter().rev() {
+            result = result * x + coeff;
+        }
+
+        result
+    }
+
+    pub fn fold(&self, alpha: FieldElement) -> Polynomial {
+        // even_poly = a_nx^n+ ... a_1x+a_0
+        // odd_poly = b_nx^n+ ... b_1x+b_0
+        let (even_poly, odd_poly) = self.split_even_odd();
+        
+        // f'(x) = even(x) + alpha * odd(x)
+        let mut new_coeffs = Vec::new();
+        let max_len = even_poly.coefficients.len().max(odd_poly.coefficients.len());
+        
+        for i in 0..max_len {
+            // a_i
+            let even_val = even_poly.coefficients.get(i)
+                .copied()
+                .unwrap_or(FieldElement::zero(alpha.modulus));
+
+            // b_i
+            let odd_val = odd_poly.coefficients.get(i)
+                .copied()
+                .unwrap_or(FieldElement::zero(alpha.modulus));
+            
+            new_coeffs.push(even_val + alpha * odd_val);
+        }
+        
+        Polynomial::new(new_coeffs)
+    }
+
+    pub fn split_even_odd(&self) -> (Polynomial, Polynomial) {
+        let mut even_coeffs = Vec::new();
+        let mut odd_coeffs = Vec::new();
+        
+        for (i, &coeff) in self.coefficients.iter().enumerate() {
+            if i % 2 == 0 {
+                even_coeffs.push(coeff);
+            } else {
+                odd_coeffs.push(coeff);
+            }
+        }
+        
+        (Polynomial::new(even_coeffs), Polynomial::new(odd_coeffs))
+    }
 }
