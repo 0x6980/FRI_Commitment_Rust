@@ -1,6 +1,6 @@
 use crate::field::FieldElement;
 use crate::polynomial::Polynomial;
-use crate::merkle::MerkleTree;
+use crate::merkle::{ MerkleTree, FRIQueryProof, LayerQueryProof };
 use rand::Rng;
 
 pub struct FRIProver {
@@ -18,7 +18,7 @@ impl FRIProver {
         Self {
             modulus: modulus,
             original_poly: poly,
-            domain: domain
+            domain: domain,
         }
     }
 
@@ -67,6 +67,111 @@ impl FRIProver {
 
         (commitments, all_evaluations)
     }
+
+    pub fn generate_query_proof(
+        &self,
+        query_index: usize,
+        all_evaluations: &[Vec<FieldElement>],
+    ) -> FRIQueryProof {
+        let mut layer_proofs = Vec::new();
+        
+        // Generate authentication path for each layer
+        let mut current_index = query_index;
+        let mut current_domain_size = self.domain.len();
+        
+        for (layer_index, evaluations) in all_evaluations.iter().enumerate() {
+            if evaluations.len() <= 1 {
+                break; // Reached constant layer
+            }
+            
+            let layer_proof = self.generate_layer_query_proof(
+                layer_index,
+                current_index,
+                evaluations,
+                current_domain_size,
+            );
+            
+            layer_proofs.push(layer_proof);
+            
+            // Move to next layer: square the index and halve domain
+            current_index = (current_index * 2) % current_domain_size;
+            current_domain_size /= 2;
+        }
+        
+        let final_constant = self.get_final_constant(all_evaluations);
+        
+        FRIQueryProof {
+            layer_proofs,
+            final_constant,
+        }
+    }
+
+    fn generate_layer_query_proof(
+        &self,
+        layer_index: usize,
+        point_index: usize,
+        evaluations: &[FieldElement],
+        domain_size: usize,
+    ) -> LayerQueryProof {
+        // Get the opposite point and its value
+        let opposite_index = (point_index + domain_size / 2) % domain_size;
+        
+        let merkle_proof = self.generate_merkle_proof(layer_index, point_index, evaluations);
+        let opposite_merkle_proof = self.generate_merkle_proof(layer_index, opposite_index, evaluations);
+        
+        LayerQueryProof {
+            layer_index,
+            point: FieldElement::new(point_index as u64, self.modulus),
+            value: evaluations[point_index],
+            opposite_point: FieldElement::new(opposite_index as u64, self.modulus),
+            opposite_value: evaluations[opposite_index],
+            merkle_proof,
+            opposite_merkle_proof,
+        }
+    }
+
+    fn generate_merkle_proof(
+        &self,
+        layer_index: usize,
+        index: usize,
+        evaluations: &[FieldElement],
+    ) -> MerkleProof {
+        // In a real implementation, this would use the actual Merkle tree
+        // For now, create a mock proof that includes necessary information
+        
+        let leaf_value = Self::hash_field_element(&evaluations[index]);
+        
+        // Generate sibling hashes for the proof
+        let mut sibling_hashes = Vec::new();
+        let mut current_index = index;
+        let mut current_level_size = evaluations.len();
+        
+        while current_level_size > 1 {
+            let sibling_index = if current_index % 2 == 0 {
+                current_index + 1
+            } else {
+                current_index - 1
+            };
+            
+            // Handle case where sibling doesn't exist (odd level)
+            let sibling_value = if sibling_index < evaluations.len() {
+                evaluations[sibling_index]
+            } else {
+                evaluations[current_index] // Duplicate if odd
+            };
+            
+            sibling_hashes.push(Self::hash_field_element(&sibling_value));
+            
+            current_index /= 2;
+            current_level_size = (current_level_size + 1) / 2;
+        }
+        
+        MerkleProof {
+            leaf_index: index,
+            leaf_value,
+            sibling_hashes,
+        }
+    }
 }
 
 
@@ -74,62 +179,6 @@ pub struct FRIVerifier {
     modulus: u64,
     committed_roots: Vec<Vec<u8>>,
     challenges: Vec<FieldElement>,
-}
-
-// What is Merkle proof?
-// For every leaf in the leaves there is path in mrkle tree, start from that leaf to merkle root.
-// Consider the below mrkle tree. 
-//        Root
-//       /     \
-//    H0123    H4567
-//    /   \     /  \
-//  H01  H23   H45  H67
-// / \   / \   / \   / \
-// 0  1  2  3 4   5 6  7  ← Leaves
-//For leaf 2, the proof is:
-// Sibling at level 0: Leaf 3 (H3)
-// Sibling at level 1: Node H01
-// Sibling at level 2: Node H4567
-// Thus, the path is: H3-> H01-> H4567
-// this the sibling hashes for leaf 2.
-// We construct the below struct for represting this proof
-pub struct MerkleProof {
-    pub leaf_index: usize,
-    pub leaf_value: [u8; 32], 
-    pub sibling_hashes: Vec<[u8; 32]>,
-}
-
-// If the verifier choose `index` as query parameter then:
-// In layer 0 the prover must prepare
-// f_{odd}(w^{index}) + Merkle proof of that, and
-// f_{odd}(-w^{index}) + Merkle proof of that
-// In layer 1 the prover must prepare
-// f_{odd}(w^{2(index)}) + Merkle proof of that, and
-// f_{odd}(-w^{2(index)}) + Merkle proof of that
-// In layer 2 the prover must prepare
-// f_{odd}(w^{4(index)}) + Merkle proof of that, and
-// f_{odd}(-w^{4(index)}) + Merkle proof of that
-// and so on. Thus
-// In each layer `j` of folding the prover should generate
-// f_{odd}(w^{2^j(index)}) + Merkle proof, and
-// f_{odd}(-w^(2^j{index)}) + Merkle proof, and
-
-// and in last layer should send the constant `c`, no proof need.
-// Thus FRI Query proof need a list of layer query proof and a constant for last layer
-// We construct the below two struct as Query Proof.
-pub struct LayerQueryProof {
-    pub layer_index: usize,
-    pub point: FieldElement,
-    pub value: FieldElement,
-    pub opposite_point: FieldElement, 
-    pub opposite_value: FieldElement,
-    pub merkle_proof: MerkleProof,
-    pub opposite_merkle_proof: MerkleProof,
-}
-
-pub struct FRIQueryProof {
-    pub layer_proofs: Vec<LayerQueryProof>,
-    pub final_constant: FieldElement,
 }
 
 impl FRIVerifier {
