@@ -1,11 +1,4 @@
-
-use std::ops::{
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Neg,
-};
+use std::ops::{Add, Div, Mul, Neg, Sub};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FieldElement {
@@ -20,10 +13,7 @@ impl FieldElement {
     /// This implementation assumes that modulus is prime.
     /// Primality is not checked here.
     pub fn new(value: u64, modulus: u64) -> Self {
-        assert!(
-            modulus > 1,
-            "Modulus must be greater than 1"
-        );
+        assert!(modulus > 1, "Modulus must be greater than 1");
 
         Self {
             value: value % modulus,
@@ -50,8 +40,7 @@ impl FieldElement {
     /// Checks that two field elements belong to the same field.
     fn assert_same_field(&self, other: &Self) {
         assert_eq!(
-            self.modulus,
-            other.modulus,
+            self.modulus, other.modulus,
             "Cannot operate on elements from different fields"
         );
     }
@@ -80,10 +69,7 @@ impl FieldElement {
     ///
     /// This is valid when p is prime and a != 0.
     pub fn inverse(self) -> Self {
-        assert!(
-            !self.is_zero(),
-            "Zero has no multiplicative inverse"
-        );
+        assert!(!self.is_zero(), "Zero has no multiplicative inverse");
 
         self.pow(self.modulus - 2)
     }
@@ -96,9 +82,7 @@ impl Add for FieldElement {
     fn add(self, other: Self) -> Self {
         self.assert_same_field(&other);
 
-        let sum =
-            (self.value as u128 + other.value as u128)
-            % self.modulus as u128;
+        let sum = (self.value as u128 + other.value as u128) % self.modulus as u128;
 
         Self::new(sum as u64, self.modulus)
     }
@@ -127,9 +111,7 @@ impl Mul for FieldElement {
     fn mul(self, other: Self) -> Self {
         self.assert_same_field(&other);
 
-        let product =
-            (self.value as u128 * other.value as u128)
-            % self.modulus as u128;
+        let product = (self.value as u128 * other.value as u128) % self.modulus as u128;
 
         Self::new(product as u64, self.modulus)
     }
@@ -153,10 +135,7 @@ impl Neg for FieldElement {
             return self;
         }
 
-        Self::new(
-            self.modulus - self.value,
-            self.modulus,
-        )
+        Self::new(self.modulus - self.value, self.modulus)
     }
 }
 
@@ -195,10 +174,7 @@ mod tests {
         let a = FieldElement::new(5, P);
         let inverse = a.inverse();
 
-        assert_eq!(
-            a * inverse,
-            FieldElement::one(P)
-        );
+        assert_eq!(a * inverse, FieldElement::one(P));
 
         assert_eq!(inverse, FieldElement::new(39, P));
     }
@@ -208,32 +184,20 @@ mod tests {
         let a = FieldElement::new(20, P);
         let b = FieldElement::new(5, P);
 
-        assert_eq!(
-            a / b,
-            FieldElement::new(4, P)
-        );
+        assert_eq!(a / b, FieldElement::new(4, P));
     }
 
     #[test]
     fn test_negation() {
         let a = FieldElement::new(5, P);
 
-        assert_eq!(
-            -a,
-            FieldElement::new(92, P)
-        );
+        assert_eq!(-a, FieldElement::new(92, P));
     }
 
     #[test]
     fn test_zero_and_one() {
-        assert_eq!(
-            FieldElement::zero(P).value,
-            0
-        );
+        assert_eq!(FieldElement::zero(P).value, 0);
 
-        assert_eq!(
-            FieldElement::one(P).value,
-            1
-        );
+        assert_eq!(FieldElement::one(P).value, 1);
     }
 }

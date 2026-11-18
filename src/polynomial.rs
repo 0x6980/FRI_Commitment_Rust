@@ -1,4 +1,3 @@
-
 use crate::field::FieldElement;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -21,16 +20,13 @@ impl Polynomial {
 
         for coefficient in &coefficients {
             assert_eq!(
-                coefficient.modulus,
-                modulus,
+                coefficient.modulus, modulus,
                 "All coefficients must belong to the same field"
             );
         }
 
         // Remove unnecessary trailing zero coefficients.
-        while coefficients.len() > 1
-            && coefficients.last().unwrap().is_zero()
-        {
+        while coefficients.len() > 1 && coefficients.last().unwrap().is_zero() {
             coefficients.pop();
         }
 
@@ -38,15 +34,11 @@ impl Polynomial {
     }
 
     pub fn zero(modulus: u64) -> Self {
-        Self::new(vec![
-            FieldElement::zero(modulus)
-        ])
+        Self::new(vec![FieldElement::zero(modulus)])
     }
 
     pub fn one(modulus: u64) -> Self {
-        Self::new(vec![
-            FieldElement::one(modulus)
-        ])
+        Self::new(vec![FieldElement::one(modulus)])
     }
 
     pub fn degree(&self) -> usize {
@@ -71,8 +63,7 @@ impl Polynomial {
             "Evaluation point belongs to a different field"
         );
 
-        let mut result =
-            FieldElement::zero(self.modulus());
+        let mut result = FieldElement::zero(self.modulus());
 
         for coefficient in self.coefficients.iter().rev() {
             result = result * x + *coefficient;
@@ -134,27 +125,19 @@ impl Polynomial {
         let modulus = self.modulus();
         let zero = FieldElement::zero(modulus);
 
-        let max_len = even_poly.coefficients.len()
+        let max_len = even_poly
+            .coefficients
+            .len()
             .max(odd_poly.coefficients.len());
 
-        let mut folded_coefficients =
-            Vec::with_capacity(max_len);
+        let mut folded_coefficients = Vec::with_capacity(max_len);
 
         for i in 0..max_len {
-            let even_coefficient = even_poly
-                .coefficients
-                .get(i)
-                .copied()
-                .unwrap_or(zero);
+            let even_coefficient = even_poly.coefficients.get(i).copied().unwrap_or(zero);
 
-            let odd_coefficient = odd_poly
-                .coefficients
-                .get(i)
-                .copied()
-                .unwrap_or(zero);
+            let odd_coefficient = odd_poly.coefficients.get(i).copied().unwrap_or(zero);
 
-            let folded_coefficient =
-                even_coefficient + alpha * odd_coefficient;
+            let folded_coefficient = even_coefficient + alpha * odd_coefficient;
 
             folded_coefficients.push(folded_coefficient);
         }
@@ -176,12 +159,7 @@ mod tests {
     #[test]
     fn test_polynomial_evaluation() {
         // f(X) = 3 + 2X + 5X^2 + 4X^3
-        let f = Polynomial::new(vec![
-            fe(3),
-            fe(2),
-            fe(5),
-            fe(4),
-        ]);
+        let f = Polynomial::new(vec![fe(3), fe(2), fe(5), fe(4)]);
 
         // f(2) = 3 + 4 + 20 + 32 = 59
         assert_eq!(f.evaluate(fe(2)), fe(59));
@@ -194,30 +172,13 @@ mod tests {
         // f_even(Y) = 3 + 5Y
         // f_odd(Y)  = 2 + 4Y
 
-        let f = Polynomial::new(vec![
-            fe(3),
-            fe(2),
-            fe(5),
-            fe(4),
-        ]);
+        let f = Polynomial::new(vec![fe(3), fe(2), fe(5), fe(4)]);
 
         let (even, odd) = f.split_even_odd();
 
-        assert_eq!(
-            even,
-            Polynomial::new(vec![
-                fe(3),
-                fe(5),
-            ])
-        );
+        assert_eq!(even, Polynomial::new(vec![fe(3), fe(5),]));
 
-        assert_eq!(
-            odd,
-            Polynomial::new(vec![
-                fe(2),
-                fe(4),
-            ])
-        );
+        assert_eq!(odd, Polynomial::new(vec![fe(2), fe(4),]));
     }
 
     #[test]
@@ -232,21 +193,13 @@ mod tests {
         // g(Y) = (3 + 5Y) + 7(2 + 4Y)
         //      = 17 + 33Y
 
-        let f = Polynomial::new(vec![
-            fe(3),
-            fe(2),
-            fe(5),
-            fe(4),
-        ]);
+        let f = Polynomial::new(vec![fe(3), fe(2), fe(5), fe(4)]);
 
         let alpha = fe(7);
 
         let folded = f.fold(alpha);
 
-        let expected = Polynomial::new(vec![
-            fe(17),
-            fe(33),
-        ]);
+        let expected = Polynomial::new(vec![fe(17), fe(33)]);
 
         assert_eq!(folded, expected);
     }
@@ -266,14 +219,7 @@ mod tests {
         // (f(x) + f(-x))/2
         // + alpha * (f(x) - f(-x))/(2x)
 
-        let f = Polynomial::new(vec![
-            fe(3),
-            fe(2),
-            fe(5),
-            fe(4),
-            fe(7),
-            fe(6),
-        ]);
+        let f = Polynomial::new(vec![fe(3), fe(2), fe(5), fe(4), fe(7), fe(6)]);
 
         let alpha = fe(7);
 
@@ -290,23 +236,16 @@ mod tests {
 
             let x_squared = x * x;
 
-            let even_part =
-                (fx + f_minus_x) * two_inverse;
+            let even_part = (fx + f_minus_x) * two_inverse;
 
-            let odd_part =
-                (fx - f_minus_x)
-                * two_inverse
-                * x.inverse();
+            let odd_part = (fx - f_minus_x) * two_inverse * x.inverse();
 
-            let value_from_pairs =
-                even_part + alpha * odd_part;
+            let value_from_pairs = even_part + alpha * odd_part;
 
-            let value_from_coefficients =
-                folded.evaluate(x_squared);
+            let value_from_coefficients = folded.evaluate(x_squared);
 
             assert_eq!(
-                value_from_pairs,
-                value_from_coefficients,
+                value_from_pairs, value_from_coefficients,
                 "Folding identity failed for x = {}",
                 x_value
             );
@@ -315,16 +254,11 @@ mod tests {
 
     #[test]
     fn test_fold_constant_polynomial() {
-        let f = Polynomial::new(vec![
-            fe(42),
-        ]);
+        let f = Polynomial::new(vec![fe(42)]);
 
         let folded = f.fold(fe(7));
 
-        assert_eq!(
-            folded,
-            Polynomial::new(vec![fe(42)])
-        );
+        assert_eq!(folded, Polynomial::new(vec![fe(42)]));
     }
 
     #[test]
@@ -336,20 +270,10 @@ mod tests {
         //
         // Folding does not depend on alpha.
 
-        let f = Polynomial::new(vec![
-            fe(3),
-            fe(0),
-            fe(5),
-        ]);
+        let f = Polynomial::new(vec![fe(3), fe(0), fe(5)]);
 
         let folded = f.fold(fe(7));
 
-        assert_eq!(
-            folded,
-            Polynomial::new(vec![
-                fe(3),
-                fe(5),
-            ])
-        );
+        assert_eq!(folded, Polynomial::new(vec![fe(3), fe(5),]));
     }
 }
