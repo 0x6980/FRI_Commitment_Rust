@@ -1,5 +1,6 @@
 mod evaluation_domain;
 mod field;
+mod merkle;
 mod polynomial;
 
 use evaluation_domain::EvaluationDomain;
