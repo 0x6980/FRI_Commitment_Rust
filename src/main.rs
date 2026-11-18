@@ -4,6 +4,7 @@ mod fri_layer;
 mod fri_query;
 mod merkle;
 mod polynomial;
+mod transcript;
 
 use evaluation_domain::EvaluationDomain;
 use field::FieldElement;
