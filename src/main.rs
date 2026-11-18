@@ -1,6 +1,7 @@
 mod evaluation_domain;
 mod field;
 mod fri_layer;
+mod fri_prover;
 mod fri_query;
 mod merkle;
 mod polynomial;
