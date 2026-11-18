@@ -46,16 +46,16 @@ impl Polynomial {
         
         for i in 0..max_len {
             // a_i
-            let even_val = even_poly.coefficients.get(i)
+            let even_coeff = even_poly.coefficients.get(i)
                 .copied()
                 .unwrap_or(FieldElement::zero(alpha.modulus));
 
             // b_i
-            let odd_val = odd_poly.coefficients.get(i)
+            let odd_coeff = odd_poly.coefficients.get(i)
                 .copied()
                 .unwrap_or(FieldElement::zero(alpha.modulus));
             
-            new_coeffs.push(even_val + alpha * odd_val);
+            new_coeffs.push(even_coeff + alpha * odd_coeff);
         }
         
         Polynomial::new(new_coeffs)
@@ -64,7 +64,7 @@ impl Polynomial {
     pub fn split_even_odd(&self) -> (Polynomial, Polynomial) {
         let mut even_coeffs = Vec::new();
         let mut odd_coeffs = Vec::new();
-        
+
         for (i, &coeff) in self.coefficients.iter().enumerate() {
             if i % 2 == 0 {
                 even_coeffs.push(coeff);
@@ -72,7 +72,7 @@ impl Polynomial {
                 odd_coeffs.push(coeff);
             }
         }
-        
+
         (Polynomial::new(even_coeffs), Polynomial::new(odd_coeffs))
     }
 }
