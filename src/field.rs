@@ -59,7 +59,11 @@ impl Mul for FieldElement {
 
     fn mul(self, other: Self) -> Self {
         assert_eq!(self.modulus, other.modulus);
-        Self::new(self.value * other.value, self.modulus)
+
+        let product =
+            (self.value as u128 * other.value as u128)
+            % self.modulus as u128;
+
+        Self::new(product as u64, self.modulus)
     }
-    
 }
