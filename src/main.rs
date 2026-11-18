@@ -1,5 +1,6 @@
 mod evaluation_domain;
 mod field;
+mod fri_layer;
 mod merkle;
 mod polynomial;
 
