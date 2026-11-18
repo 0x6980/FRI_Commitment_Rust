@@ -1,5 +1,5 @@
 [package]
-name = "FRI_Commitment_Rust"
+name = "fri_commitment_rust"
 version = "0.1.0"
 edition = "2024"
 
