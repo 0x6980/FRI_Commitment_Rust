@@ -98,6 +98,36 @@ impl FriProver {
     pub fn transcript_state(&self) -> [u8; 32] {
         self.transcript.state()
     }
+
+    /// Samples query indices after all layer commitments have
+    /// been absorbed into the transcript.
+    ///
+    /// Each initial query index belongs to the first half
+    /// of the initial evaluation domain.
+    pub fn sample_query_indices(&mut self, query_count: usize) -> Vec<usize> {
+        let initial_size = self.layers[0].size();
+
+        assert!(
+            initial_size >= 2,
+            "Initial domain must contain at least two elements"
+        );
+
+        let query_domain_size = initial_size / 2;
+
+        let mut indices = Vec::with_capacity(query_count);
+
+        for query_number in 0..query_count {
+            let label = format!("FRI_QUERY_INDEX_{}", query_number);
+
+            let index = self
+                .transcript
+                .challenge_index(label.as_bytes(), query_domain_size);
+
+            indices.push(index);
+        }
+
+        indices
+    }
 }
 
 #[cfg(test)]
@@ -203,5 +233,61 @@ mod tests {
         let second = FriProver::run(initial_layer(), 5);
 
         assert_eq!(first.transcript_state(), second.transcript_state());
+    }
+
+    #[test]
+    fn test_query_indices_are_in_first_half() {
+        let mut prover = FriProver::run(initial_layer(), 5);
+
+        let indices = prover.sample_query_indices(20);
+
+        assert_eq!(indices.len(), 20);
+
+        for index in indices {
+            assert!(index < 16);
+        }
+    }
+
+    #[test]
+    fn test_query_indices_are_deterministic() {
+        let mut first = FriProver::run(initial_layer(), 5);
+        let mut second = FriProver::run(initial_layer(), 5);
+
+        let first_indices = first.sample_query_indices(10);
+        let second_indices = second.sample_query_indices(10);
+
+        assert_eq!(first_indices, second_indices);
+    }
+
+    #[test]
+    fn test_query_sampling_advances_transcript() {
+        let mut prover = FriProver::run(initial_layer(), 5);
+
+        let initial_state = prover.transcript_state();
+
+        prover.sample_query_indices(5);
+
+        assert_ne!(prover.transcript_state(), initial_state);
+    }
+
+    #[test]
+    fn test_zero_query_count_returns_empty_vector() {
+        let mut prover = FriProver::run(initial_layer(), 5);
+
+        let indices = prover.sample_query_indices(0);
+
+        assert!(indices.is_empty());
+    }
+
+    #[test]
+    fn test_query_indices_can_be_sampled_for_different_counts() {
+        let mut first = FriProver::run(initial_layer(), 5);
+        let mut second = FriProver::run(initial_layer(), 5);
+
+        let first_indices = first.sample_query_indices(3);
+        let second_indices = second.sample_query_indices(7);
+
+        assert_eq!(first_indices.len(), 3);
+        assert_eq!(second_indices.len(), 7);
     }
 }

@@ -94,6 +94,59 @@ impl Transcript {
     pub fn state(&self) -> [u8; 32] {
         self.state
     }
+
+    /// Derives a uniformly distributed index in [0, upper_bound).
+    ///
+    /// The result is derived from the current transcript state.
+    /// After deriving the index, the result is absorbed into the transcript.
+    pub fn challenge_index(&mut self, label: &[u8], upper_bound: usize) -> usize {
+        assert!(upper_bound > 0, "Upper bound must be greater than zero");
+
+        let bound = upper_bound as u128;
+        let range = 1u128 << 64;
+        let limit = range - (range % bound);
+
+        let mut counter = 0u64;
+
+        let index = loop {
+            let mut hasher = Sha256::new();
+
+            hasher.update(b"FRI_TRANSCRIPT_INDEX_CHALLENGE_V1");
+            hasher.update(self.state);
+            hasher.update((label.len() as u64).to_le_bytes());
+            hasher.update(label);
+            hasher.update(counter.to_le_bytes());
+
+            let digest = hasher.finalize();
+
+            let mut bytes = [0u8; 8];
+            bytes.copy_from_slice(&digest[..8]);
+
+            let candidate = u64::from_le_bytes(bytes) as u128;
+
+            if candidate < limit {
+                break (candidate % bound) as usize;
+            }
+
+            counter = counter
+                .checked_add(1)
+                .expect("Index rejection counter overflow");
+        };
+
+        let mut encoded_result = Vec::new();
+
+        encoded_result.extend_from_slice(b"FRI_TRANSCRIPT_INDEX_RESULT_V1");
+
+        encoded_result.extend_from_slice(&(label.len() as u64).to_le_bytes());
+
+        encoded_result.extend_from_slice(label);
+        encoded_result.extend_from_slice(&(upper_bound as u64).to_le_bytes());
+        encoded_result.extend_from_slice(&(index as u64).to_le_bytes());
+
+        self.absorb(&encoded_result);
+
+        index
+    }
 }
 
 impl Default for Transcript {
@@ -196,5 +249,66 @@ mod tests {
         let alpha_1 = transcript.challenge(b"alpha-1", P);
 
         assert_ne!(alpha_0, alpha_1);
+    }
+
+    #[test]
+    fn test_query_index_is_in_range() {
+        let mut transcript = Transcript::new();
+
+        transcript.absorb(b"layer-root");
+
+        let index = transcript.challenge_index(b"query-0", 16);
+
+        assert!(index < 16);
+    }
+
+    #[test]
+    fn test_same_state_produces_same_query_index() {
+        let mut first = Transcript::new();
+        let mut second = Transcript::new();
+
+        first.absorb(b"root-0");
+        second.absorb(b"root-0");
+
+        let index_first = first.challenge_index(b"query-0", 16);
+
+        let index_second = second.challenge_index(b"query-0", 16);
+
+        assert_eq!(index_first, index_second);
+    }
+
+    #[test]
+    fn test_different_labels_produce_different_query_indices() {
+        let mut first = Transcript::new();
+        let mut second = Transcript::new();
+
+        first.absorb(b"root-0");
+        second.absorb(b"root-0");
+
+        let index_first = first.challenge_index(b"query-0", 1024);
+
+        let index_second = second.challenge_index(b"query-1", 1024);
+
+        assert_ne!(index_first, index_second);
+    }
+
+    #[test]
+    fn test_query_index_advances_transcript() {
+        let mut transcript = Transcript::new();
+
+        let initial_state = transcript.state();
+
+        transcript.challenge_index(b"query-0", 16);
+
+        assert_ne!(transcript.state(), initial_state);
+    }
+
+    #[test]
+    fn test_query_index_with_bound_one() {
+        let mut transcript = Transcript::new();
+
+        let index = transcript.challenge_index(b"query-0", 1);
+
+        assert_eq!(index, 0);
     }
 }
