@@ -3,6 +3,27 @@ use crate::polynomial::Polynomial;
 use crate::merkle::{ MerkleTree, FRIQueryProof, LayerQueryProof };
 use rand::Rng;
 
+pub struct FriProof {
+    pub layer_roots: Vec<Hash>,
+    pub final_value: FieldElement,
+    pub queries: Vec<FriQueryProof>,
+}
+
+pub struct FriQueryProof {
+    pub index: usize,
+    pub round_proofs: Vec<FriRoundQueryProof>,
+}
+
+pub struct FriRoundQueryProof {
+    pub value_x: FieldElement,
+    pub value_minus_x: FieldElement,
+    pub folded_value: FieldElement,
+
+    pub proof_x: MerkleProof,
+    pub proof_minus_x: MerkleProof,
+    pub folded_proof: MerkleProof,
+}
+
 pub struct FRIProver {
     modulus: u64,
     original_poly: Polynomial,

@@ -1,7 +1,9 @@
 use crate::evaluation_domain::EvaluationDomain;
 use crate::field::FieldElement;
+use crate::fri_config::FriConfig;
 use crate::fri_proof::FriProof;
 use crate::merkle::MerkleTree;
+use crate::polynomial::Polynomial;
 use crate::transcript::Transcript;
 
 /// Verifies an educational FRI proof.
@@ -10,33 +12,17 @@ use crate::transcript::Transcript;
 pub struct FriVerifier;
 
 impl FriVerifier {
-    /// Verifies a proof using the public initial evaluation domain
-    /// and the expected number of queries.
-    pub fn verify(
-        proof: &FriProof,
-        initial_domain: &EvaluationDomain,
-        expected_query_count: usize,
-    ) -> bool {
+    /// Verifies a proof using the public initial domain and FRI configuration.
+    pub fn verify(proof: &FriProof, initial_domain: &EvaluationDomain, config: &FriConfig) -> bool {
         let initial_size = initial_domain.size;
         let modulus = initial_domain.modulus();
         let generator = initial_domain.generator;
 
-        // This implementation requires a power-of-two domain
-        // with at least two elements.
+        // Validate the initial domain.
         if initial_size < 2 || !initial_size.is_power_of_two() {
             return false;
         }
 
-        // A nonempty query set is required.
-        if expected_query_count == 0 {
-            return false;
-        }
-
-        if proof.queries.len() != expected_query_count {
-            return false;
-        }
-
-        // Validate the initial subgroup generator.
         if generator.pow(initial_size as u64) != FieldElement::one(modulus) {
             return false;
         }
@@ -45,15 +31,56 @@ impl FriVerifier {
             return false;
         }
 
-        // This educational version folds until the domain
-        // contains exactly one element.
-        let rounds = initial_size.trailing_zeros() as usize;
+        // Determine the number of rounds from the public configuration.
+        let rounds = match config.rounds(initial_size) {
+            Ok(rounds) => rounds,
+            Err(_) => return false,
+        };
+
+        let final_degree_bound = match config.final_degree_bound(initial_size) {
+            Ok(bound) => bound,
+            Err(_) => return false,
+        };
+
+        if config.query_count == 0 {
+            return false;
+        }
+
+        if proof.queries.len() != config.query_count {
+            return false;
+        }
 
         if proof.layer_roots.len() != rounds + 1 {
             return false;
         }
 
-        if proof.final_value.modulus != modulus {
+        // Validate the final evaluation vector.
+        if proof.final_evaluations.len() != config.final_domain_size {
+            return false;
+        }
+
+        if proof
+            .final_evaluations
+            .iter()
+            .any(|value| value.modulus != modulus)
+        {
+            return false;
+        }
+
+        // Keep the compatibility field consistent with the final vector.
+        if proof.final_evaluations.first() != Some(&proof.final_value) {
+            return false;
+        }
+
+        // Reconstruct the final Merkle commitment from all final evaluations.
+        let final_tree = MerkleTree::new(&proof.final_evaluations.clone());
+
+        if final_tree.root() != proof.layer_roots[rounds] {
+            return false;
+        }
+
+        // Verify the degree bound of the final polynomial.
+        if !Self::verify_final_degree(&proof.final_evaluations, initial_domain, config) {
             return false;
         }
 
@@ -89,8 +116,7 @@ impl FriVerifier {
             current_size /= 2;
             current_generator = current_generator * current_generator;
 
-            // Absorb the next layer commitment after deriving
-            // the challenge and folding.
+            // Absorb the next commitment after deriving the challenge.
             Self::absorb_layer_commitment(
                 &mut transcript,
                 round + 1,
@@ -100,13 +126,12 @@ impl FriVerifier {
             );
         }
 
-        // Derive query indices only after all layer roots
-        // have been absorbed.
+        // Derive query indices after all commitments have been absorbed.
         let query_domain_size = initial_size / 2;
 
-        let mut expected_indices = Vec::with_capacity(expected_query_count);
+        let mut expected_indices = Vec::with_capacity(config.query_count);
 
-        for query_number in 0..expected_query_count {
+        for query_number in 0..config.query_count {
             let label = format!("FRI_QUERY_INDEX_{}", query_number);
 
             let index = transcript.challenge_index(label.as_bytes(), query_domain_size);
@@ -135,8 +160,6 @@ impl FriVerifier {
 
                 let expected_opposite_index = expected_current_index + half_size;
 
-                // The next layer stores the folded value
-                // at the representative index.
                 let expected_folded_index = expected_current_index;
 
                 let current_layer_size = initial_size >> round;
@@ -151,7 +174,7 @@ impl FriVerifier {
                     return false;
                 }
 
-                // Bind each Merkle proof to the expected position.
+                // Check the positions authenticated by Merkle proofs.
                 if opening.proof_x.index != expected_current_index
                     || opening.proof_minus_x.index != expected_opposite_index
                     || opening.folded_proof.index != expected_folded_index
@@ -166,13 +189,13 @@ impl FriVerifier {
                     return false;
                 }
 
-                // Authenticate f(x) against the current layer root.
+                // Authenticate f(x).
                 if !MerkleTree::verify(opening.value_x, &opening.proof_x, &proof.layer_roots[round])
                 {
                     return false;
                 }
 
-                // Authenticate f(-x) against the current layer root.
+                // Authenticate f(-x).
                 if !MerkleTree::verify(
                     opening.value_minus_x,
                     &opening.proof_minus_x,
@@ -181,7 +204,7 @@ impl FriVerifier {
                     return false;
                 }
 
-                // Authenticate the folded value against the next root.
+                // Authenticate the folded value.
                 if !MerkleTree::verify(
                     opening.folded_value,
                     &opening.folded_proof,
@@ -207,18 +230,23 @@ impl FriVerifier {
                     return false;
                 }
 
-                // The last folded value must equal the
-                // publicly supplied final value.
-                if round + 1 == rounds && opening.folded_value != proof.final_value {
-                    return false;
+                // On the final round, authenticate the folded value
+                // against its exact position in final_evaluations.
+                if round + 1 == rounds {
+                    if opening.folded_value != proof.final_evaluations[expected_folded_index] {
+                        return false;
+                    }
                 }
             }
         }
 
+        // The proof passed all checks.
+        let _ = final_degree_bound;
+
         true
     }
 
-    /// Reproduces the exact layer-commitment encoding used by FriProver.
+    /// Reproduces the layer-commitment encoding used by the prover.
     fn absorb_layer_commitment(
         transcript: &mut Transcript,
         layer_index: usize,
@@ -227,20 +255,76 @@ impl FriVerifier {
         root: &[u8; 32],
     ) {
         transcript.absorb(b"FRI_LAYER_COMMITMENT_V1");
-
         transcript.absorb(&(layer_index as u64).to_le_bytes());
-
         transcript.absorb(&(layer_size as u64).to_le_bytes());
-
         transcript.absorb(&generator.value.to_le_bytes());
-
         transcript.absorb(root);
+    }
+
+    /// Checks whether the final evaluation vector represents
+    /// a polynomial within the configured degree bound.
+    fn verify_final_degree(
+        final_evaluations: &[FieldElement],
+        initial_domain: &EvaluationDomain,
+        config: &FriConfig,
+    ) -> bool {
+        let initial_size = initial_domain.size;
+
+        let rounds = match config.rounds(initial_size) {
+            Ok(rounds) => rounds,
+            Err(_) => return false,
+        };
+
+        if final_evaluations.len() != config.final_domain_size {
+            return false;
+        }
+
+        let modulus = initial_domain.modulus();
+
+        if final_evaluations
+            .iter()
+            .any(|value| value.modulus != modulus)
+        {
+            return false;
+        }
+
+        // The final domain generator is omega^(2^rounds).
+        let exponent = match 1u64.checked_shl(rounds as u32) {
+            Some(value) => value,
+            None => return false,
+        };
+
+        let final_generator = initial_domain.generator.pow(exponent);
+
+        let final_domain = EvaluationDomain::new(final_generator, config.final_domain_size);
+
+        let domain_points = final_domain.points();
+
+        let interpolation_points: Vec<(FieldElement, FieldElement)> = domain_points
+            .into_iter()
+            .zip(final_evaluations.iter().copied())
+            .collect();
+
+        let final_polynomial = Polynomial::interpolate(&interpolation_points);
+
+        let degree_bound = match config.final_degree_bound(initial_size) {
+            Ok(bound) => bound,
+            Err(_) => return false,
+        };
+
+        // Coefficients are stored in ascending order.
+        final_polynomial
+            .coefficients
+            .iter()
+            .skip(degree_bound + 1)
+            .all(|coefficient| coefficient.is_zero())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::evaluation_domain::EvaluationDomain;
     use crate::field::FieldElement;
     use crate::fri_layer::FriLayer;
@@ -272,85 +356,171 @@ mod tests {
         FriLayer::new(domain, evaluations)
     }
 
+    fn test_config() -> FriConfig {
+        FriConfig::new(
+            5, // initial degree bound
+            QUERY_COUNT,
+            8, // final domain size
+        )
+    }
+
     fn valid_proof() -> FriProof {
-        let mut prover = FriProver::run(initial_layer(), 5);
+        let mut prover = FriProver::run(initial_layer(), test_config());
+
         prover.build_proof(QUERY_COUNT)
     }
 
     #[test]
     fn test_valid_proof_is_accepted() {
         let proof = valid_proof();
-        let domain = initial_domain();
 
-        assert!(FriVerifier::verify(&proof, &domain, QUERY_COUNT,));
+        assert!(FriVerifier::verify(
+            &proof,
+            &initial_domain(),
+            &test_config(),
+        ));
     }
 
     #[test]
     fn test_wrong_query_count_is_rejected() {
         let proof = valid_proof();
-        let domain = initial_domain();
 
-        assert!(!FriVerifier::verify(&proof, &domain, QUERY_COUNT + 1,));
+        let config = FriConfig::new(5, QUERY_COUNT + 1, 8);
+
+        assert!(!FriVerifier::verify(&proof, &initial_domain(), &config,));
     }
 
     #[test]
     fn test_modified_query_index_is_rejected() {
         let mut proof = valid_proof();
-        let domain = initial_domain();
 
         proof.queries[0].index = (proof.queries[0].index + 1) % 16;
 
-        assert!(!FriVerifier::verify(&proof, &domain, QUERY_COUNT,));
+        assert!(!FriVerifier::verify(
+            &proof,
+            &initial_domain(),
+            &test_config(),
+        ));
     }
 
     #[test]
     fn test_modified_evaluation_is_rejected() {
         let mut proof = valid_proof();
-        let domain = initial_domain();
 
         proof.queries[0].round_proofs[0].value_x = fe(42);
 
-        assert!(!FriVerifier::verify(&proof, &domain, QUERY_COUNT,));
+        assert!(!FriVerifier::verify(
+            &proof,
+            &initial_domain(),
+            &test_config(),
+        ));
     }
 
     #[test]
     fn test_modified_merkle_root_is_rejected() {
         let mut proof = valid_proof();
-        let domain = initial_domain();
 
         proof.layer_roots[0][0] ^= 1;
 
-        assert!(!FriVerifier::verify(&proof, &domain, QUERY_COUNT,));
+        assert!(!FriVerifier::verify(
+            &proof,
+            &initial_domain(),
+            &test_config(),
+        ));
     }
 
     #[test]
     fn test_modified_final_value_is_rejected() {
         let mut proof = valid_proof();
-        let domain = initial_domain();
 
         proof.final_value = fe(42);
 
-        assert!(!FriVerifier::verify(&proof, &domain, QUERY_COUNT,));
+        assert!(!FriVerifier::verify(
+            &proof,
+            &initial_domain(),
+            &test_config(),
+        ));
+    }
+
+    #[test]
+    fn test_modified_final_evaluation_is_rejected() {
+        let mut proof = valid_proof();
+
+        proof.final_evaluations[0] = proof.final_evaluations[0] + fe(1);
+
+        assert!(!FriVerifier::verify(
+            &proof,
+            &initial_domain(),
+            &test_config(),
+        ));
     }
 
     #[test]
     fn test_modified_merkle_sibling_is_rejected() {
         let mut proof = valid_proof();
-        let domain = initial_domain();
 
         proof.queries[0].round_proofs[0].proof_x.siblings[0][0] ^= 1;
 
-        assert!(!FriVerifier::verify(&proof, &domain, QUERY_COUNT,));
+        assert!(!FriVerifier::verify(
+            &proof,
+            &initial_domain(),
+            &test_config(),
+        ));
     }
 
     #[test]
-    fn test_final_layer_opening_has_empty_merkle_path() {
+    fn test_final_layer_opening_has_correct_merkle_path() {
         let proof = valid_proof();
 
         let last_round = proof.queries[0].round_proofs.last().unwrap();
 
-        assert_eq!(last_round.folded_proof.leaf_count, 1);
+        assert_eq!(last_round.folded_proof.leaf_count, 8);
+        assert_eq!(last_round.folded_proof.siblings.len(), 3);
+    }
 
-        assert!(last_round.folded_proof.siblings.is_empty());
+    #[test]
+    fn test_verify_final_degree_accepts_valid_linear_polynomial() {
+        let domain = initial_domain();
+        let config = test_config();
+
+        let final_generator = fe(19).pow(4);
+
+        let final_domain = EvaluationDomain::new(final_generator, 8);
+
+        // g(X) = 7 + 3X
+        let final_evaluations: Vec<FieldElement> = final_domain
+            .points()
+            .iter()
+            .map(|x| fe(7) + fe(3) * *x)
+            .collect();
+
+        assert!(FriVerifier::verify_final_degree(
+            &final_evaluations,
+            &domain,
+            &config,
+        ));
+    }
+
+    #[test]
+    fn test_verify_final_degree_rejects_quadratic_polynomial() {
+        let domain = initial_domain();
+        let config = test_config();
+
+        let final_generator = fe(19).pow(4);
+
+        let final_domain = EvaluationDomain::new(final_generator, 8);
+
+        // g(X) = 7 + 3X + 2X^2
+        let final_evaluations: Vec<FieldElement> = final_domain
+            .points()
+            .iter()
+            .map(|x| fe(7) + fe(3) * *x + fe(2) * *x * *x)
+            .collect();
+
+        assert!(!FriVerifier::verify_final_degree(
+            &final_evaluations,
+            &domain,
+            &config,
+        ));
     }
 }

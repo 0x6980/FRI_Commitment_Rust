@@ -1,4 +1,5 @@
 use crate::field::FieldElement;
+use crate::fri_config::FriConfig;
 use crate::fri_layer::FriLayer;
 use crate::fri_proof::{FriProof, FriQueryProof, FriRoundQueryProof};
 use crate::transcript::Transcript;
@@ -20,52 +21,42 @@ impl FriProver {
     /// Runs the requested number of FRI folding rounds.
     ///
     /// The initial layer commitment is absorbed before the first challenge.
-    pub fn run(initial_layer: FriLayer, rounds: usize) -> Self {
+    pub fn run(initial_layer: FriLayer, config: FriConfig) -> Self {
         let initial_size = initial_layer.size();
 
-        assert!(
-            initial_size.is_power_of_two(),
-            "Initial layer size must be a power of two"
-        );
+        config
+            .final_degree_bound(initial_size)
+            .expect("Invalid FRI configuration");
 
-        assert!(
-            rounds <= initial_size.trailing_zeros() as usize,
-            "Cannot fold more rounds than the domain allows"
-        );
+        let rounds = config
+            .rounds(initial_size)
+            .expect("Invalid FRI configuration");
 
         let modulus = initial_layer.domain.modulus();
+        let generator = initial_layer.domain.generator;
 
         let mut transcript = Transcript::new();
 
-        // Absorb public protocol parameters.
         transcript.absorb(b"FRI_PROTOCOL_V1");
-
         transcript.absorb(&modulus.to_le_bytes());
-
         transcript.absorb(&(initial_size as u64).to_le_bytes());
-
-        transcript.absorb(&initial_layer.domain.generator.value.to_le_bytes());
-
-        // Crucial: commit to the initial layer before deriving alpha_0.
-        Self::absorb_layer_commitment(&mut transcript, 0, &initial_layer);
+        transcript.absorb(&generator.value.to_le_bytes());
 
         let mut layers = vec![initial_layer];
+
         let mut challenges = Vec::with_capacity(rounds);
 
-        for round in 0..rounds {
-            let current_layer = layers.last().unwrap();
+        Self::absorb_layer_commitment(&mut transcript, 0, &layers[0]);
 
-            // Derive a fresh challenge from the current transcript.
+        for round in 0..rounds {
             let label = format!("FRI_FOLD_CHALLENGE_ROUND_{}", round);
 
             let alpha = transcript.challenge(label.as_bytes(), modulus);
 
             challenges.push(alpha);
 
-            // Fold only after the challenge has been derived.
-            let next_layer = current_layer.fold(alpha);
+            let next_layer = layers.last().unwrap().fold(alpha);
 
-            // Absorb the new commitment before the next round.
             Self::absorb_layer_commitment(&mut transcript, round + 1, &next_layer);
 
             layers.push(next_layer);
@@ -134,12 +125,6 @@ impl FriProver {
     /// This educational version requires the folding process to end
     /// in a one-element final layer.
     pub fn build_proof(&mut self, query_count: usize) -> FriProof {
-        assert_eq!(
-            self.final_layer().size(),
-            1,
-            "Proof generation requires a one-element final layer"
-        );
-
         let query_indices = self.sample_query_indices(query_count);
 
         let layer_roots: Vec<_> = self.layers.iter().map(|layer| layer.root()).collect();
@@ -233,6 +218,14 @@ mod tests {
         FieldElement::new(value, P)
     }
 
+    fn test_config(final_domain_size: usize) -> FriConfig {
+        FriConfig::new(
+            5,           // degree_bound
+            QUERY_COUNT, // query_count
+            final_domain_size,
+        )
+    }
+
     fn initial_layer() -> FriLayer {
         let polynomial = Polynomial::new(vec![fe(3), fe(2), fe(5), fe(4), fe(7), fe(6)]);
 
@@ -249,7 +242,9 @@ mod tests {
 
     #[test]
     fn test_run_one_round() {
-        let prover = FriProver::run(initial_layer(), 1);
+        let config: FriConfig = FriConfig::new(5, 5, 8);
+
+        let prover = FriProver::run(initial_layer(), test_config(16));
 
         assert_eq!(prover.layers.len(), 2);
         assert_eq!(prover.challenges.len(), 1);
@@ -260,7 +255,7 @@ mod tests {
 
     #[test]
     fn test_run_multiple_rounds() {
-        let prover = FriProver::run(initial_layer(), 5);
+        let prover = FriProver::run(initial_layer(), test_config(1));
 
         let expected_sizes = [32, 16, 8, 4, 2, 1];
 
@@ -274,7 +269,7 @@ mod tests {
 
     #[test]
     fn test_each_round_uses_a_field_challenge() {
-        let prover = FriProver::run(initial_layer(), 5);
+        let prover = FriProver::run(initial_layer(), test_config(1));
 
         for alpha in &prover.challenges {
             assert_eq!(alpha.modulus, P);
@@ -284,15 +279,15 @@ mod tests {
 
     #[test]
     fn test_round_challenges_are_deterministic() {
-        let first = FriProver::run(initial_layer(), 5);
-        let second = FriProver::run(initial_layer(), 5);
+        let first = FriProver::run(initial_layer(), test_config(1));
+        let second = FriProver::run(initial_layer(), test_config(1));
 
         assert_eq!(first.challenges, second.challenges);
     }
 
     #[test]
     fn test_each_round_has_a_new_commitment() {
-        let prover = FriProver::run(initial_layer(), 5);
+        let prover = FriProver::run(initial_layer(), test_config(1));
 
         for pair in prover.layers.windows(2) {
             assert_ne!(pair[0].root(), pair[1].root());
@@ -301,7 +296,7 @@ mod tests {
 
     #[test]
     fn test_final_layer_has_size_one() {
-        let prover = FriProver::run(initial_layer(), 5);
+        let prover = FriProver::run(initial_layer(), test_config(1));
 
         assert_eq!(prover.final_layer().size(), 1);
     }
@@ -311,7 +306,7 @@ mod tests {
         let initial = initial_layer();
         let initial_root = initial.root();
 
-        let prover = FriProver::run(initial, 0);
+        let prover = FriProver::run(initial, test_config(32));
 
         assert_eq!(prover.layers.len(), 1);
         assert!(prover.challenges.is_empty());
@@ -320,15 +315,15 @@ mod tests {
 
     #[test]
     fn test_transcript_state_is_deterministic() {
-        let first = FriProver::run(initial_layer(), 5);
-        let second = FriProver::run(initial_layer(), 5);
+        let first = FriProver::run(initial_layer(), test_config(1));
+        let second = FriProver::run(initial_layer(), test_config(1));
 
         assert_eq!(first.transcript_state(), second.transcript_state());
     }
 
     #[test]
     fn test_query_indices_are_in_first_half() {
-        let mut prover = FriProver::run(initial_layer(), 5);
+        let mut prover = FriProver::run(initial_layer(), test_config(1));
 
         let indices = prover.sample_query_indices(20);
 
@@ -341,8 +336,8 @@ mod tests {
 
     #[test]
     fn test_query_indices_are_deterministic() {
-        let mut first = FriProver::run(initial_layer(), 5);
-        let mut second = FriProver::run(initial_layer(), 5);
+        let mut first = FriProver::run(initial_layer(), test_config(1));
+        let mut second = FriProver::run(initial_layer(), test_config(1));
 
         let first_indices = first.sample_query_indices(10);
         let second_indices = second.sample_query_indices(10);
@@ -352,7 +347,7 @@ mod tests {
 
     #[test]
     fn test_query_sampling_advances_transcript() {
-        let mut prover = FriProver::run(initial_layer(), 5);
+        let mut prover = FriProver::run(initial_layer(), test_config(1));
 
         let initial_state = prover.transcript_state();
 
@@ -363,7 +358,7 @@ mod tests {
 
     #[test]
     fn test_zero_query_count_returns_empty_vector() {
-        let mut prover = FriProver::run(initial_layer(), 5);
+        let mut prover = FriProver::run(initial_layer(), test_config(1));
 
         let indices = prover.sample_query_indices(0);
 
@@ -372,8 +367,8 @@ mod tests {
 
     #[test]
     fn test_query_indices_can_be_sampled_for_different_counts() {
-        let mut first = FriProver::run(initial_layer(), 5);
-        let mut second = FriProver::run(initial_layer(), 5);
+        let mut first = FriProver::run(initial_layer(), test_config(1));
+        let mut second = FriProver::run(initial_layer(), test_config(1));
 
         let first_indices = first.sample_query_indices(3);
         let second_indices = second.sample_query_indices(7);
@@ -384,7 +379,7 @@ mod tests {
 
     #[test]
     fn test_build_proof_has_all_layer_roots() {
-        let mut prover = FriProver::run(initial_layer(), 5);
+        let mut prover = FriProver::run(initial_layer(), test_config(1));
         let proof = prover.build_proof(4);
 
         assert_eq!(proof.layer_roots.len(), 6);
@@ -396,7 +391,7 @@ mod tests {
 
     #[test]
     fn test_build_proof_has_requested_query_count() {
-        let mut prover = FriProver::run(initial_layer(), 5);
+        let mut prover = FriProver::run(initial_layer(), test_config(1));
         let proof = prover.build_proof(7);
 
         assert_eq!(proof.queries.len(), 7);
@@ -404,7 +399,7 @@ mod tests {
 
     #[test]
     fn test_each_query_has_one_opening_per_round() {
-        let mut prover = FriProver::run(initial_layer(), 5);
+        let mut prover = FriProver::run(initial_layer(), test_config(1));
         let proof = prover.build_proof(4);
 
         for query in &proof.queries {
@@ -417,7 +412,7 @@ mod tests {
     fn test_query_openings_verify_against_layer_roots() {
         use crate::merkle::MerkleTree;
 
-        let mut prover = FriProver::run(initial_layer(), 5);
+        let mut prover = FriProver::run(initial_layer(), test_config(1));
         let proof = prover.build_proof(4);
 
         for query in &proof.queries {
@@ -445,7 +440,7 @@ mod tests {
 
     #[test]
     fn test_query_folded_values_match_fold_equation() {
-        let mut prover = FriProver::run(initial_layer(), 5);
+        let mut prover = FriProver::run(initial_layer(), test_config(1));
         let proof = prover.build_proof(4);
 
         let two_inverse = fe(2).inverse();
@@ -476,7 +471,7 @@ mod tests {
     fn test_final_value_is_authenticated_by_last_round() {
         use crate::merkle::MerkleTree;
 
-        let mut prover = FriProver::run(initial_layer(), 5);
+        let mut prover = FriProver::run(initial_layer(), test_config(1));
         let proof = prover.build_proof(3);
 
         let last_root = *proof.layer_roots.last().unwrap();
@@ -496,12 +491,84 @@ mod tests {
 
     #[test]
     fn test_proof_contains_all_final_evaluations() {
-        let mut prover = FriProver::run(initial_layer(), 5);
+        let mut prover = FriProver::run(initial_layer(), test_config(1));
 
         let proof = prover.build_proof(QUERY_COUNT);
 
         assert_eq!(proof.final_evaluations.len(), 1);
 
         assert_eq!(proof.final_evaluations[0], proof.final_value);
+    }
+
+    #[test]
+    fn test_prover_stops_at_configured_final_domain_size() {
+        let config = FriConfig::new(5, 5, 8);
+
+        let prover = FriProver::run(initial_layer(), config);
+
+        assert_eq!(prover.layers.len(), 3);
+        assert_eq!(prover.challenges.len(), 2);
+
+        assert_eq!(prover.layers[0].size(), 32);
+        assert_eq!(prover.layers[1].size(), 16);
+        assert_eq!(prover.layers[2].size(), 8);
+
+        assert_eq!(prover.final_layer().size(), 8);
+    }
+
+    #[test]
+    fn test_final_degree_bound_after_two_rounds() {
+        let config = FriConfig::new(5, 5, 8);
+
+        let final_degree = config.final_degree_bound(32).unwrap();
+
+        assert_eq!(final_degree, 1);
+    }
+
+    #[test]
+    fn test_build_proof_contains_all_final_evaluations() {
+        let config = FriConfig::new(5, 5, 8);
+
+        let mut prover = FriProver::run(initial_layer(), config);
+
+        let proof = prover.build_proof(QUERY_COUNT);
+
+        assert_eq!(proof.final_evaluations.len(), 8);
+
+        assert_eq!(proof.final_value, proof.final_evaluations[0]);
+    }
+
+    #[test]
+    fn test_final_evaluations_match_committed_root() {
+        use crate::merkle::MerkleTree;
+
+        let config = FriConfig::new(5, 5, 8);
+
+        let mut prover = FriProver::run(initial_layer(), config);
+
+        let proof = prover.build_proof(QUERY_COUNT);
+
+        let final_evaluations = proof.final_evaluations.clone();
+
+        let reconstructed_tree = MerkleTree::new(&final_evaluations);
+
+        let reconstructed_root = reconstructed_tree.root();
+
+        let committed_root = *proof.layer_roots.last().unwrap();
+
+        assert_eq!(reconstructed_root, committed_root);
+    }
+
+    #[test]
+    fn test_final_layer_size_matches_config() {
+        let config = FriConfig::new(5, 5, 8);
+
+        let mut prover = FriProver::run(initial_layer(), config);
+
+        let proof = prover.build_proof(QUERY_COUNT);
+
+        assert_eq!(proof.final_evaluations.len(), prover.final_layer().size());
+
+        assert_eq!(proof.final_evaluations.len(), 8);
     }
 }
