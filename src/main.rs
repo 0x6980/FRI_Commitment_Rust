@@ -1,5 +1,6 @@
 mod evaluation_domain;
 mod field;
+mod fri_config;
 mod fri_layer;
 mod fri_proof;
 mod fri_prover;
