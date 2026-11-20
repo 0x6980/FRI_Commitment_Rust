@@ -144,6 +144,83 @@ impl Polynomial {
 
         Polynomial::new(folded_coefficients)
     }
+
+    /// Constructs the unique polynomial of degree at most n - 1
+    /// that interpolates n distinct points.
+    ///
+    /// Points must have distinct x-coordinates and all coordinates
+    /// must belong to the same field.
+    pub fn interpolate(points: &[(FieldElement, FieldElement)]) -> Self {
+        assert!(
+            !points.is_empty(),
+            "Interpolation requires at least one point"
+        );
+
+        let modulus = points[0].0.modulus;
+
+        // Check that all coordinates belong to the same field.
+        for (x, y) in points {
+            assert_eq!(
+                x.modulus, modulus,
+                "All x-coordinates must belong to the same field"
+            );
+
+            assert_eq!(
+                y.modulus, modulus,
+                "All y-coordinates must belong to the same field"
+            );
+        }
+
+        let mut result = vec![FieldElement::zero(modulus); points.len()];
+
+        for i in 0..points.len() {
+            let (x_i, y_i) = points[i];
+
+            // Construct the numerator:
+            // product (X - x_j), for j != i.
+            let mut basis = vec![FieldElement::one(modulus)];
+
+            // Construct the denominator:
+            // product (x_i - x_j), for j != i.
+            let mut denominator = FieldElement::one(modulus);
+
+            for j in 0..points.len() {
+                if i == j {
+                    continue;
+                }
+
+                let x_j = points[j].0;
+
+                let mut next_basis = vec![FieldElement::zero(modulus); basis.len() + 1];
+
+                // Multiply the current basis by (X - x_j).
+                for k in 0..basis.len() {
+                    next_basis[k] = next_basis[k] - basis[k] * x_j;
+
+                    next_basis[k + 1] = next_basis[k + 1] + basis[k];
+                }
+
+                basis = next_basis;
+
+                denominator = denominator * (x_i - x_j);
+            }
+
+            assert!(
+                !denominator.is_zero(),
+                "Interpolation points must have distinct x-coordinates"
+            );
+
+            // Scale the basis polynomial by:
+            // y_i / denominator.
+            let scale = y_i / denominator;
+
+            for k in 0..basis.len() {
+                result[k] = result[k] + basis[k] * scale;
+            }
+        }
+
+        Self::new(result)
+    }
 }
 
 #[cfg(test)]
@@ -275,5 +352,76 @@ mod tests {
         let folded = f.fold(fe(7));
 
         assert_eq!(folded, Polynomial::new(vec![fe(3), fe(5),]));
+    }
+}
+
+#[cfg(test)]
+mod interpolation_tests {
+    use super::*;
+
+    const P: u64 = 97;
+
+    fn fe(value: u64) -> FieldElement {
+        FieldElement::new(value, P)
+    }
+
+    #[test]
+    fn test_interpolate_recovers_original_polynomial() {
+        let original = Polynomial::new(vec![fe(3), fe(2), fe(5), fe(4)]);
+
+        let points: Vec<(FieldElement, FieldElement)> = [1, 2, 3, 4]
+            .iter()
+            .map(|x| {
+                let x = fe(*x);
+                (x, original.evaluate(x))
+            })
+            .collect();
+
+        let recovered = Polynomial::interpolate(&points);
+
+        assert_eq!(recovered.coefficients, original.coefficients);
+    }
+
+    #[test]
+    fn test_interpolate_matches_all_points() {
+        let points = vec![
+            (fe(1), fe(7)),
+            (fe(2), fe(12)),
+            (fe(3), fe(19)),
+            (fe(4), fe(28)),
+        ];
+
+        let polynomial = Polynomial::interpolate(&points);
+
+        for (x, y) in points {
+            assert_eq!(polynomial.evaluate(x), y);
+        }
+    }
+
+    #[test]
+    fn test_interpolate_single_point() {
+        let points = vec![(fe(5), fe(42))];
+
+        let polynomial = Polynomial::interpolate(&points);
+
+        assert_eq!(polynomial.coefficients, vec![fe(42)]);
+
+        assert_eq!(polynomial.evaluate(fe(5)), fe(42));
+    }
+
+    #[test]
+    #[should_panic(expected = "Interpolation points must have distinct x-coordinates")]
+    fn test_interpolate_rejects_duplicate_x_coordinates() {
+        let points = vec![(fe(2), fe(10)), (fe(2), fe(20))];
+
+        Polynomial::interpolate(&points);
+    }
+
+    #[test]
+    #[should_panic(expected = "Interpolation requires at least one point")]
+    fn test_interpolate_rejects_empty_input() {
+        let points: Vec<(FieldElement, FieldElement)> = vec![];
+
+        Polynomial::interpolate(&points);
     }
 }
