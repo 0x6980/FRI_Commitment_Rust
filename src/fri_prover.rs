@@ -1,7 +1,7 @@
 use crate::field::FieldElement;
 use crate::fri_layer::FriLayer;
+use crate::fri_proof::{FriProof, FriQueryProof, FriRoundQueryProof};
 use crate::transcript::Transcript;
-
 /// Coordinates the educational FRI folding process.
 ///
 /// For each round:
@@ -127,6 +127,94 @@ impl FriProver {
         }
 
         indices
+    }
+
+    /// Builds a proof by opening the sampled positions in every layer.
+    ///
+    /// This educational version requires the folding process to end
+    /// in a one-element final layer.
+    pub fn build_proof(&mut self, query_count: usize) -> FriProof {
+        assert_eq!(
+            self.final_layer().size(),
+            1,
+            "Proof generation requires a one-element final layer"
+        );
+
+        let query_indices = self.sample_query_indices(query_count);
+
+        let layer_roots: Vec<_> = self.layers.iter().map(|layer| layer.root()).collect();
+
+        let final_value = self
+            .final_layer()
+            .evaluation(0)
+            .expect("Final layer must contain one value");
+
+        let mut queries = Vec::with_capacity(query_count);
+
+        for initial_index in query_indices {
+            let mut round_proofs = Vec::with_capacity(self.challenges.len());
+
+            for round in 0..self.challenges.len() {
+                let current_layer = &self.layers[round];
+                let next_layer = &self.layers[round + 1];
+
+                let half_size = current_layer.size() / 2;
+
+                // The representative index is reduced modulo
+                // the first half of the current layer.
+                let current_index = initial_index % half_size;
+
+                let opposite_index = current_index + half_size;
+
+                // The folded value is stored at current_index
+                // in the next layer.
+                let folded_index = current_index;
+
+                let value_x = current_layer
+                    .evaluation(current_index)
+                    .expect("Query index out of range");
+
+                let value_minus_x = current_layer
+                    .evaluation(opposite_index)
+                    .expect("Opposite query index out of range");
+
+                let folded_value = next_layer
+                    .evaluation(folded_index)
+                    .expect("Folded query index out of range");
+
+                let proof_x = current_layer
+                    .prove(current_index)
+                    .expect("Could not create Merkle proof for x");
+
+                let proof_minus_x = current_layer
+                    .prove(opposite_index)
+                    .expect("Could not create Merkle proof for -x");
+
+                let folded_proof = next_layer
+                    .prove(folded_index)
+                    .expect("Could not create Merkle proof for folded value");
+
+                round_proofs.push(FriRoundQueryProof {
+                    value_x,
+                    value_minus_x,
+                    folded_value,
+                    proof_x,
+                    proof_minus_x,
+                    folded_proof,
+                });
+            }
+
+            queries.push(FriQueryProof {
+                index: initial_index,
+                round_proofs,
+            });
+        }
+
+        FriProof {
+            layer_roots,
+            final_value,
+            queries,
+        }
     }
 }
 
@@ -289,5 +377,117 @@ mod tests {
 
         assert_eq!(first_indices.len(), 3);
         assert_eq!(second_indices.len(), 7);
+    }
+
+    #[test]
+    fn test_build_proof_has_all_layer_roots() {
+        let mut prover = FriProver::run(initial_layer(), 5);
+        let proof = prover.build_proof(4);
+
+        assert_eq!(proof.layer_roots.len(), 6);
+        assert_eq!(
+            proof.final_value,
+            prover.final_layer().evaluation(0).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_build_proof_has_requested_query_count() {
+        let mut prover = FriProver::run(initial_layer(), 5);
+        let proof = prover.build_proof(7);
+
+        assert_eq!(proof.queries.len(), 7);
+    }
+
+    #[test]
+    fn test_each_query_has_one_opening_per_round() {
+        let mut prover = FriProver::run(initial_layer(), 5);
+        let proof = prover.build_proof(4);
+
+        for query in &proof.queries {
+            assert_eq!(query.round_proofs.len(), 5);
+            assert!(query.index < 16);
+        }
+    }
+
+    #[test]
+    fn test_query_openings_verify_against_layer_roots() {
+        use crate::merkle::MerkleTree;
+
+        let mut prover = FriProver::run(initial_layer(), 5);
+        let proof = prover.build_proof(4);
+
+        for query in &proof.queries {
+            for (round, opening) in query.round_proofs.iter().enumerate() {
+                assert!(MerkleTree::verify(
+                    opening.value_x,
+                    &opening.proof_x,
+                    &proof.layer_roots[round],
+                ));
+
+                assert!(MerkleTree::verify(
+                    opening.value_minus_x,
+                    &opening.proof_minus_x,
+                    &proof.layer_roots[round],
+                ));
+
+                assert!(MerkleTree::verify(
+                    opening.folded_value,
+                    &opening.folded_proof,
+                    &proof.layer_roots[round + 1],
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn test_query_folded_values_match_fold_equation() {
+        let mut prover = FriProver::run(initial_layer(), 5);
+        let proof = prover.build_proof(4);
+
+        let two_inverse = fe(2).inverse();
+
+        for query in &proof.queries {
+            for (round, opening) in query.round_proofs.iter().enumerate() {
+                let current_layer = &prover.layers[round];
+                let half_size = current_layer.size() / 2;
+                let current_index = query.index % half_size;
+
+                let x = current_layer.domain.points()[current_index];
+
+                let alpha = prover.challenges[round];
+
+                let even_part = (opening.value_x + opening.value_minus_x) * two_inverse;
+
+                let odd_part =
+                    (opening.value_x - opening.value_minus_x) * two_inverse * x.inverse();
+
+                let expected_folded = even_part + alpha * odd_part;
+
+                assert_eq!(opening.folded_value, expected_folded);
+            }
+        }
+    }
+
+    #[test]
+    fn test_final_value_is_authenticated_by_last_round() {
+        use crate::merkle::MerkleTree;
+
+        let mut prover = FriProver::run(initial_layer(), 5);
+        let proof = prover.build_proof(3);
+
+        let last_root = *proof.layer_roots.last().unwrap();
+
+        for query in &proof.queries {
+            let last_opening = query.round_proofs.last().unwrap();
+
+            assert_eq!(last_opening.folded_value, proof.final_value);
+
+            assert!(MerkleTree::verify(
+                proof.final_value,
+                &last_opening.folded_proof,
+                &last_root,
+            ));
+        }
     }
 }
