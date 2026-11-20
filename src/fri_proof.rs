@@ -42,8 +42,12 @@ pub struct FriProof {
     /// Merkle roots of all layers, including the final layer.
     pub layer_roots: Vec<Hash>,
 
-    /// The value in the final one-element layer.
+    // Temporary compatibility field.
+    // Will be removed when the verifier is updated.
     pub final_value: FieldElement,
+
+    // All evaluations in the final FRI layer.
+    pub final_evaluations: Vec<FieldElement>,
 
     /// Query openings.
     pub queries: Vec<FriQueryProof>,

@@ -144,10 +144,11 @@ impl FriProver {
 
         let layer_roots: Vec<_> = self.layers.iter().map(|layer| layer.root()).collect();
 
-        let final_value = self
-            .final_layer()
-            .evaluation(0)
-            .expect("Final layer must contain one value");
+        let final_layer = self.final_layer();
+
+        let final_value = final_layer.evaluations[0];
+
+        let final_evaluations = final_layer.evaluations.clone();
 
         let mut queries = Vec::with_capacity(query_count);
 
@@ -213,6 +214,7 @@ impl FriProver {
         FriProof {
             layer_roots,
             final_value,
+            final_evaluations,
             queries,
         }
     }
@@ -225,6 +227,7 @@ mod tests {
     use crate::polynomial::Polynomial;
 
     const P: u64 = 97;
+    const QUERY_COUNT: usize = 5;
 
     fn fe(value: u64) -> FieldElement {
         FieldElement::new(value, P)
@@ -489,5 +492,16 @@ mod tests {
                 &last_root,
             ));
         }
+    }
+
+    #[test]
+    fn test_proof_contains_all_final_evaluations() {
+        let mut prover = FriProver::run(initial_layer(), 5);
+
+        let proof = prover.build_proof(QUERY_COUNT);
+
+        assert_eq!(proof.final_evaluations.len(), 1);
+
+        assert_eq!(proof.final_evaluations[0], proof.final_value);
     }
 }
