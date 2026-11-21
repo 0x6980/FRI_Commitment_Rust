@@ -176,17 +176,6 @@ fn hash_leaf(value: &FieldElement) -> Hash {
 
     hasher.finalize().into()
 }
-fn hash_leaf(value: &FieldElement) -> Hash {
-    let mut hasher = Sha256::new();
-
-    // Domain separation: 0x00 identifies a leaf.
-    hasher.update([0x00]);
-
-    hasher.update(value.modulus().to_le_bytes());
-    hasher.update(value.value().to_le_bytes());
-
-    hasher.finalize().into()
-}
 /// Hashes an internal Merkle node.
 ///
 /// Encoding:
