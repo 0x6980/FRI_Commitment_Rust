@@ -13,7 +13,12 @@ pub struct FriVerifier;
 
 impl FriVerifier {
     /// Verifies a proof using the public initial domain and FRI configuration.
-    pub fn verify(proof: &FriProof, initial_domain: &EvaluationDomain, config: &FriConfig) -> bool {
+    pub fn verify(
+        proof: &FriProof,
+        initial_domain: &EvaluationDomain,
+        expected_initial_root: &[u8; 32],
+        config: &FriConfig,
+    ) -> bool {
         let initial_size = initial_domain.size;
         let modulus = initial_domain.modulus();
         let generator = initial_domain.generator;
@@ -37,20 +42,20 @@ impl FriVerifier {
             Err(_) => return false,
         };
 
-        let final_degree_bound = match config.final_degree_bound(initial_size) {
+        match config.final_degree_bound(initial_size) {
             Ok(bound) => bound,
             Err(_) => return false,
         };
-
-        if config.query_count == 0 {
-            return false;
-        }
 
         if proof.queries.len() != config.query_count {
             return false;
         }
 
         if proof.layer_roots.len() != rounds + 1 {
+            return false;
+        }
+
+        if &proof.layer_roots[0] != expected_initial_root {
             return false;
         }
 
@@ -91,6 +96,12 @@ impl FriVerifier {
         transcript.absorb(&modulus.to_le_bytes());
         transcript.absorb(&(initial_size as u64).to_le_bytes());
         transcript.absorb(&generator.value.to_le_bytes());
+
+        // FRI configuration
+        transcript.absorb(b"FRI_CONFIG_V1");
+        transcript.absorb(&(config.degree_bound as u64).to_le_bytes());
+        transcript.absorb(&(config.query_count as u64).to_le_bytes());
+        transcript.absorb(&(config.final_domain_size as u64).to_le_bytes());
 
         let mut challenges = Vec::with_capacity(rounds);
 
@@ -140,8 +151,6 @@ impl FriVerifier {
         }
 
         let two_inverse = FieldElement::new(2, modulus).inverse();
-
-        // Verify every query.
 
         // Verify every query.
         for (query, expected_index) in proof.queries.iter().zip(expected_indices.iter()) {
@@ -265,7 +274,6 @@ impl FriVerifier {
         }
 
         // The proof passed all checks.
-        let _ = final_degree_bound;
 
         true
     }
@@ -397,11 +405,13 @@ mod tests {
     #[test]
     fn test_valid_proof_is_accepted() {
         let proof = valid_proof();
+        let expected_root = initial_layer().root();
 
         assert!(FriVerifier::verify(
             &proof,
             &initial_domain(),
-            &test_config(),
+            &expected_root,
+            &test_config()
         ));
     }
 
@@ -411,7 +421,14 @@ mod tests {
 
         let config = FriConfig::new(5, QUERY_COUNT + 1, 8);
 
-        assert!(!FriVerifier::verify(&proof, &initial_domain(), &config,));
+        let expected_root = initial_layer().root();
+
+        assert!(!FriVerifier::verify(
+            &proof,
+            &initial_domain(),
+            &expected_root,
+            &config
+        ));
     }
 
     #[test]
@@ -420,10 +437,13 @@ mod tests {
 
         proof.queries[0].index = (proof.queries[0].index + 1) % 16;
 
+        let expected_root = initial_layer().root();
+
         assert!(!FriVerifier::verify(
             &proof,
             &initial_domain(),
-            &test_config(),
+            &expected_root,
+            &test_config()
         ));
     }
 
@@ -433,10 +453,13 @@ mod tests {
 
         proof.queries[0].round_proofs[0].value_x = fe(42);
 
+        let expected_root = initial_layer().root();
+
         assert!(!FriVerifier::verify(
             &proof,
             &initial_domain(),
-            &test_config(),
+            &expected_root,
+            &test_config()
         ));
     }
 
@@ -446,10 +469,13 @@ mod tests {
 
         proof.layer_roots[0][0] ^= 1;
 
+        let expected_root = initial_layer().root();
+
         assert!(!FriVerifier::verify(
             &proof,
             &initial_domain(),
-            &test_config(),
+            &expected_root,
+            &test_config()
         ));
     }
 
@@ -459,10 +485,13 @@ mod tests {
 
         proof.final_value = fe(42);
 
+        let expected_root = initial_layer().root();
+
         assert!(!FriVerifier::verify(
             &proof,
             &initial_domain(),
-            &test_config(),
+            &expected_root,
+            &test_config()
         ));
     }
 
@@ -472,10 +501,13 @@ mod tests {
 
         proof.final_evaluations[0] = proof.final_evaluations[0] + fe(1);
 
+        let expected_root = initial_layer().root();
+
         assert!(!FriVerifier::verify(
             &proof,
             &initial_domain(),
-            &test_config(),
+            &expected_root,
+            &test_config()
         ));
     }
 
@@ -485,10 +517,13 @@ mod tests {
 
         proof.queries[0].round_proofs[0].proof_x.siblings[0][0] ^= 1;
 
+        let expected_root = initial_layer().root();
+
         assert!(!FriVerifier::verify(
             &proof,
             &initial_domain(),
-            &test_config(),
+            &expected_root,
+            &test_config()
         ));
     }
 
@@ -545,6 +580,21 @@ mod tests {
             &final_evaluations,
             &domain,
             &config,
+        ));
+    }
+
+    #[test]
+    fn test_wrong_initial_commitment_is_rejected() {
+        let proof = valid_proof();
+
+        let mut wrong_root = initial_layer().root();
+        wrong_root[0] ^= 1;
+
+        assert!(!FriVerifier::verify(
+            &proof,
+            &initial_domain(),
+            &wrong_root,
+            &test_config(),
         ));
     }
 }

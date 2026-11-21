@@ -38,10 +38,17 @@ impl FriProver {
 
         let mut transcript = Transcript::new();
 
+        // Protocol parameters
         transcript.absorb(b"FRI_PROTOCOL_V1");
         transcript.absorb(&modulus.to_le_bytes());
         transcript.absorb(&(initial_size as u64).to_le_bytes());
         transcript.absorb(&generator.value.to_le_bytes());
+
+        // FRI configuration
+        transcript.absorb(b"FRI_CONFIG_V1");
+        transcript.absorb(&(config.degree_bound as u64).to_le_bytes());
+        transcript.absorb(&(config.query_count as u64).to_le_bytes());
+        transcript.absorb(&(config.final_domain_size as u64).to_le_bytes());
 
         let mut layers = vec![initial_layer];
 
@@ -91,15 +98,15 @@ impl FriProver {
     pub fn transcript_state(&self) -> [u8; 32] {
         self.transcript.state()
     }
-
-    /// Samples query indices after all layer commitments have
-    /// been absorbed into the transcript.
+    /// Samples query indices using the provided transcript.
     ///
     /// Each initial query index belongs to the first half
     /// of the initial evaluation domain.
-    pub fn sample_query_indices(&mut self, query_count: usize) -> Vec<usize> {
-        let initial_size = self.layers[0].size();
-
+    fn sample_query_indices(
+        transcript: &mut Transcript,
+        initial_size: usize,
+        query_count: usize,
+    ) -> Vec<usize> {
         assert!(
             initial_size >= 2,
             "Initial domain must contain at least two elements"
@@ -112,24 +119,26 @@ impl FriProver {
         for query_number in 0..query_count {
             let label = format!("FRI_QUERY_INDEX_{}", query_number);
 
-            let index = self
-                .transcript
-                .challenge_index(label.as_bytes(), query_domain_size);
+            let index = transcript.challenge_index(label.as_bytes(), query_domain_size);
 
             indices.push(index);
         }
 
         indices
     }
-
     /// Builds a proof by opening the sampled positions in every layer.
     ///
     /// This educational version requires the folding process to end
     /// in a one-element final layer.
-    pub fn build_proof(&mut self) -> FriProof {
-        let query_count = self.config.query_count;
+    pub fn build_proof(&self) -> FriProof {
+        // Use a local transcript copy for query sampling.
+        let mut query_transcript = self.transcript.clone();
 
-        let query_indices = self.sample_query_indices(query_count);
+        let query_indices = Self::sample_query_indices(
+            &mut query_transcript,
+            self.layers[0].size(),
+            self.config.query_count,
+        );
 
         let layer_roots: Vec<_> = self.layers.iter().map(|layer| layer.root()).collect();
 
@@ -139,7 +148,7 @@ impl FriProver {
 
         let final_evaluations = final_layer.evaluations.clone();
 
-        let mut queries = Vec::with_capacity(query_count);
+        let mut queries = Vec::with_capacity(query_indices.len());
 
         for initial_index in query_indices {
             let mut round_proofs = Vec::with_capacity(self.challenges.len());
@@ -327,9 +336,11 @@ mod tests {
 
     #[test]
     fn test_query_indices_are_in_first_half() {
-        let mut prover = FriProver::run(initial_layer(), test_config(1));
+        let prover = FriProver::run(initial_layer(), test_config(1));
 
-        let indices = prover.sample_query_indices(20);
+        let mut transcript = prover.transcript.clone();
+
+        let indices = FriProver::sample_query_indices(&mut transcript, prover.layers[0].size(), 20);
 
         assert_eq!(indices.len(), 20);
 
@@ -340,45 +351,90 @@ mod tests {
 
     #[test]
     fn test_query_indices_are_deterministic() {
-        let mut first = FriProver::run(initial_layer(), test_config(1));
-        let mut second = FriProver::run(initial_layer(), test_config(1));
+        let first = FriProver::run(initial_layer(), test_config(1));
+        let second = FriProver::run(initial_layer(), test_config(1));
 
-        let first_indices = first.sample_query_indices(10);
-        let second_indices = second.sample_query_indices(10);
+        let mut first_transcript = first.transcript.clone();
+        let mut second_transcript = second.transcript.clone();
+
+        let first_indices =
+            FriProver::sample_query_indices(&mut first_transcript, first.layers[0].size(), 10);
+
+        let second_indices =
+            FriProver::sample_query_indices(&mut second_transcript, second.layers[0].size(), 10);
 
         assert_eq!(first_indices, second_indices);
     }
 
     #[test]
-    fn test_query_sampling_advances_transcript() {
-        let mut prover = FriProver::run(initial_layer(), test_config(1));
+    fn test_query_sampling_does_not_modify_prover_transcript() {
+        let prover = FriProver::run(initial_layer(), test_config(1));
 
         let initial_state = prover.transcript_state();
 
-        prover.sample_query_indices(5);
+        let mut query_transcript = prover.transcript.clone();
 
-        assert_ne!(prover.transcript_state(), initial_state);
+        FriProver::sample_query_indices(&mut query_transcript, prover.layers[0].size(), 5);
+
+        assert_ne!(query_transcript.state(), initial_state);
+
+        assert_eq!(prover.transcript_state(), initial_state);
     }
 
     #[test]
     fn test_zero_query_count_returns_empty_vector() {
-        let mut prover = FriProver::run(initial_layer(), test_config(1));
+        let prover = FriProver::run(initial_layer(), test_config(1));
 
-        let indices = prover.sample_query_indices(0);
+        let mut transcript = prover.transcript.clone();
+
+        let indices = FriProver::sample_query_indices(&mut transcript, prover.layers[0].size(), 0);
 
         assert!(indices.is_empty());
     }
 
     #[test]
     fn test_query_indices_can_be_sampled_for_different_counts() {
-        let mut first = FriProver::run(initial_layer(), test_config(1));
-        let mut second = FriProver::run(initial_layer(), test_config(1));
+        let prover = FriProver::run(initial_layer(), test_config(1));
 
-        let first_indices = first.sample_query_indices(3);
-        let second_indices = second.sample_query_indices(7);
+        let mut first_transcript = prover.transcript.clone();
+        let mut second_transcript = prover.transcript.clone();
+
+        let first_indices =
+            FriProver::sample_query_indices(&mut first_transcript, prover.layers[0].size(), 3);
+
+        let second_indices =
+            FriProver::sample_query_indices(&mut second_transcript, prover.layers[0].size(), 7);
 
         assert_eq!(first_indices.len(), 3);
         assert_eq!(second_indices.len(), 7);
+    }
+
+    #[test]
+    fn test_build_proof_is_deterministic_and_does_not_modify_transcript() {
+        let prover = FriProver::run(initial_layer(), test_config(1));
+
+        let initial_state = prover.transcript_state();
+
+        let first_proof = prover.build_proof();
+        let second_proof = prover.build_proof();
+
+        let first_indices: Vec<usize> = first_proof
+            .queries
+            .iter()
+            .map(|query| query.index)
+            .collect();
+
+        let second_indices: Vec<usize> = second_proof
+            .queries
+            .iter()
+            .map(|query| query.index)
+            .collect();
+
+        assert_eq!(first_indices, second_indices);
+
+        assert_eq!(first_proof.layer_roots, second_proof.layer_roots);
+
+        assert_eq!(prover.transcript_state(), initial_state);
     }
 
     #[test]
@@ -577,5 +633,16 @@ mod tests {
         assert_eq!(proof.final_evaluations.len(), prover.final_layer().size());
 
         assert_eq!(proof.final_evaluations.len(), 8);
+    }
+
+    #[test]
+    fn test_transcript_depends_on_fri_config() {
+        let config_a = FriConfig::new(5, 5, 8);
+        let config_b = FriConfig::new(5, 6, 8);
+
+        let prover_a = FriProver::run(initial_layer(), config_a);
+        let prover_b = FriProver::run(initial_layer(), config_b);
+
+        assert_ne!(prover_a.transcript_state(), prover_b.transcript_state());
     }
 }
