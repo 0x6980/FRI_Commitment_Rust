@@ -142,6 +142,8 @@ impl FriVerifier {
         let two_inverse = FieldElement::new(2, modulus).inverse();
 
         // Verify every query.
+
+        // Verify every query.
         for (query, expected_index) in proof.queries.iter().zip(expected_indices.iter()) {
             if query.index != *expected_index {
                 return false;
@@ -157,13 +159,10 @@ impl FriVerifier {
                 let half_size = initial_size >> (round + 1);
 
                 let expected_current_index = expected_index % half_size;
-
                 let expected_opposite_index = expected_current_index + half_size;
-
                 let expected_folded_index = expected_current_index;
 
                 let current_layer_size = initial_size >> round;
-
                 let next_layer_size = current_layer_size / 2;
 
                 // Check field consistency.
@@ -214,8 +213,12 @@ impl FriVerifier {
                 }
 
                 // Compute x independently from the public domain.
-                let round_generator = generator.pow(1u64 << round);
+                let exponent = match 1u64.checked_shl(round as u32) {
+                    Some(value) => value,
+                    None => return false,
+                };
 
+                let round_generator = generator.pow(exponent);
                 let x = round_generator.pow(expected_current_index as u64);
 
                 // Verify the FRI folding equation.
@@ -230,8 +233,29 @@ impl FriVerifier {
                     return false;
                 }
 
-                // On the final round, authenticate the folded value
-                // against its exact position in final_evaluations.
+                // Explicitly link this round to the next round.
+                if round + 1 < rounds {
+                    let next_opening = &query.round_proofs[round + 1];
+
+                    let next_half_size = initial_size >> (round + 2);
+
+                    let next_current_index = expected_index % next_half_size;
+                    let next_opposite_index = next_current_index + next_half_size;
+
+                    let linked_value = if expected_folded_index == next_current_index {
+                        next_opening.value_x
+                    } else if expected_folded_index == next_opposite_index {
+                        next_opening.value_minus_x
+                    } else {
+                        return false;
+                    };
+
+                    if opening.folded_value != linked_value {
+                        return false;
+                    }
+                }
+
+                // On the final round, check the exact final evaluation.
                 if round + 1 == rounds {
                     if opening.folded_value != proof.final_evaluations[expected_folded_index] {
                         return false;
@@ -367,7 +391,7 @@ mod tests {
     fn valid_proof() -> FriProof {
         let mut prover = FriProver::run(initial_layer(), test_config());
 
-        prover.build_proof(QUERY_COUNT)
+        prover.build_proof()
     }
 
     #[test]

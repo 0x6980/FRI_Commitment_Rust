@@ -14,6 +14,7 @@ use crate::transcript::Transcript;
 pub struct FriProver {
     pub layers: Vec<FriLayer>,
     pub challenges: Vec<FieldElement>,
+    config: FriConfig,
     transcript: Transcript,
 }
 
@@ -65,6 +66,7 @@ impl FriProver {
         Self {
             layers,
             challenges,
+            config,
             transcript,
         }
     }
@@ -124,7 +126,9 @@ impl FriProver {
     ///
     /// This educational version requires the folding process to end
     /// in a one-element final layer.
-    pub fn build_proof(&mut self, query_count: usize) -> FriProof {
+    pub fn build_proof(&mut self) -> FriProof {
+        let query_count = self.config.query_count;
+
         let query_indices = self.sample_query_indices(query_count);
 
         let layer_roots: Vec<_> = self.layers.iter().map(|layer| layer.root()).collect();
@@ -380,7 +384,7 @@ mod tests {
     #[test]
     fn test_build_proof_has_all_layer_roots() {
         let mut prover = FriProver::run(initial_layer(), test_config(1));
-        let proof = prover.build_proof(4);
+        let proof = prover.build_proof();
 
         assert_eq!(proof.layer_roots.len(), 6);
         assert_eq!(
@@ -390,9 +394,12 @@ mod tests {
     }
 
     #[test]
-    fn test_build_proof_has_requested_query_count() {
-        let mut prover = FriProver::run(initial_layer(), test_config(1));
-        let proof = prover.build_proof(7);
+    fn test_build_proof_uses_configured_query_count() {
+        let config = FriConfig::new(5, 7, 1);
+
+        let mut prover = FriProver::run(initial_layer(), config);
+
+        let proof = prover.build_proof();
 
         assert_eq!(proof.queries.len(), 7);
     }
@@ -400,7 +407,7 @@ mod tests {
     #[test]
     fn test_each_query_has_one_opening_per_round() {
         let mut prover = FriProver::run(initial_layer(), test_config(1));
-        let proof = prover.build_proof(4);
+        let proof = prover.build_proof();
 
         for query in &proof.queries {
             assert_eq!(query.round_proofs.len(), 5);
@@ -413,7 +420,7 @@ mod tests {
         use crate::merkle::MerkleTree;
 
         let mut prover = FriProver::run(initial_layer(), test_config(1));
-        let proof = prover.build_proof(4);
+        let proof = prover.build_proof();
 
         for query in &proof.queries {
             for (round, opening) in query.round_proofs.iter().enumerate() {
@@ -441,7 +448,7 @@ mod tests {
     #[test]
     fn test_query_folded_values_match_fold_equation() {
         let mut prover = FriProver::run(initial_layer(), test_config(1));
-        let proof = prover.build_proof(4);
+        let proof = prover.build_proof();
 
         let two_inverse = fe(2).inverse();
 
@@ -472,7 +479,7 @@ mod tests {
         use crate::merkle::MerkleTree;
 
         let mut prover = FriProver::run(initial_layer(), test_config(1));
-        let proof = prover.build_proof(3);
+        let proof = prover.build_proof();
 
         let last_root = *proof.layer_roots.last().unwrap();
 
@@ -493,7 +500,7 @@ mod tests {
     fn test_proof_contains_all_final_evaluations() {
         let mut prover = FriProver::run(initial_layer(), test_config(1));
 
-        let proof = prover.build_proof(QUERY_COUNT);
+        let proof = prover.build_proof();
 
         assert_eq!(proof.final_evaluations.len(), 1);
 
@@ -531,7 +538,7 @@ mod tests {
 
         let mut prover = FriProver::run(initial_layer(), config);
 
-        let proof = prover.build_proof(QUERY_COUNT);
+        let proof = prover.build_proof();
 
         assert_eq!(proof.final_evaluations.len(), 8);
 
@@ -546,7 +553,7 @@ mod tests {
 
         let mut prover = FriProver::run(initial_layer(), config);
 
-        let proof = prover.build_proof(QUERY_COUNT);
+        let proof = prover.build_proof();
 
         let final_evaluations = proof.final_evaluations.clone();
 
@@ -565,7 +572,7 @@ mod tests {
 
         let mut prover = FriProver::run(initial_layer(), config);
 
-        let proof = prover.build_proof(QUERY_COUNT);
+        let proof = prover.build_proof();
 
         assert_eq!(proof.final_evaluations.len(), prover.final_layer().size());
 
