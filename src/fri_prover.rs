@@ -33,9 +33,9 @@ impl FriProver {
             .rounds(initial_size)
             .expect("Invalid FRI configuration");
 
-        let field = initial_layer.domain.field();
+        let field = initial_layer.domain().field();
         let modulus = field.modulus();
-        let generator = initial_layer.domain.generator;
+        let generator = initial_layer.domain().generator;
 
         let mut transcript = Transcript::new();
 
@@ -87,7 +87,7 @@ impl FriProver {
 
         transcript.absorb(&(layer.size() as u64).to_le_bytes());
 
-        transcript.absorb(&layer.domain.generator.value().to_le_bytes());
+        transcript.absorb(&layer.domain().generator.value().to_le_bytes());
 
         transcript.absorb(&layer.root());
     }
@@ -145,9 +145,9 @@ impl FriProver {
 
         let final_layer = self.final_layer();
 
-        let final_value = final_layer.evaluations[0];
+        let final_value = final_layer.evaluations()[0];
 
-        let final_evaluations = final_layer.evaluations.clone();
+        let final_evaluations = final_layer.evaluations().to_vec();
 
         let mut queries = Vec::with_capacity(query_indices.len());
 
@@ -516,7 +516,7 @@ mod tests {
                 let half_size = current_layer.size() / 2;
                 let current_index = query.index % half_size;
 
-                let x = current_layer.domain.points()[current_index];
+                let x = current_layer.domain().points()[current_index];
 
                 let alpha = prover.challenges[round];
 

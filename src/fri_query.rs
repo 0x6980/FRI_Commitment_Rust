@@ -38,13 +38,13 @@ pub fn create_query_proof(
         return None;
     }
 
-    if current_layer.domain.modulus() != next_layer.domain.modulus() {
+    if current_layer.domain().modulus() != next_layer.domain().modulus() {
         return None;
     }
 
-    let expected_generator = current_layer.domain.generator * current_layer.domain.generator;
+    let expected_generator = current_layer.domain().generator * current_layer.domain().generator;
 
-    if next_layer.domain.generator != expected_generator {
+    if next_layer.domain().generator != expected_generator {
         return None;
     }
 
@@ -220,7 +220,7 @@ mod tests {
         let (current, next, proof, alpha) = setup();
 
         assert!(verify_query(
-            &current.domain,
+            &current.domain(),
             alpha,
             &current.root(),
             &next.root(),
@@ -235,7 +235,7 @@ mod tests {
         let wrong_alpha = fe(11);
 
         assert!(!verify_query(
-            &current.domain,
+            &current.domain(),
             wrong_alpha,
             &current.root(),
             &next.root(),
@@ -250,7 +250,7 @@ mod tests {
         proof.value_x = proof.value_x + fe(1);
 
         assert!(!verify_query(
-            &current.domain,
+            &current.domain(),
             alpha,
             &current.root(),
             &next.root(),
@@ -265,7 +265,7 @@ mod tests {
         proof.folded_value = proof.folded_value + fe(1);
 
         assert!(!verify_query(
-            &current.domain,
+            &current.domain(),
             alpha,
             &current.root(),
             &next.root(),
@@ -280,7 +280,7 @@ mod tests {
         let wrong_root = [0u8; 32];
 
         assert!(!verify_query(
-            &current.domain,
+            &current.domain(),
             alpha,
             &wrong_root,
             &next.root(),
@@ -297,7 +297,7 @@ mod tests {
         proof.index = 6;
 
         assert!(!verify_query(
-            &current.domain,
+            &current.domain(),
             alpha,
             &current.root(),
             &next.root(),

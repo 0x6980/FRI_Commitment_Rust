@@ -4,9 +4,9 @@ use crate::merkle::{Hash, MerkleProof, MerkleTree};
 
 #[derive(Clone, Debug)]
 pub struct FriLayer {
-    pub domain: EvaluationDomain,
-    pub evaluations: Vec<FieldElement>,
-    pub merkle_tree: MerkleTree,
+    domain: EvaluationDomain,
+    evaluations: Vec<FieldElement>,
+    merkle_tree: MerkleTree,
 }
 
 impl FriLayer {
@@ -29,7 +29,6 @@ impl FriLayer {
             );
         }
 
-        // Commit to the evaluation vector.
         let merkle_tree = MerkleTree::new(&evaluations);
 
         Self {
@@ -37,6 +36,16 @@ impl FriLayer {
             evaluations,
             merkle_tree,
         }
+    }
+
+    /// Returns a reference to the evaluation domain.
+    pub fn domain(&self) -> &EvaluationDomain {
+        &self.domain
+    }
+
+    /// Returns all evaluations in this layer.
+    pub fn evaluations(&self) -> &[FieldElement] {
+        &self.evaluations
     }
 
     /// Returns the Merkle root of this layer.
@@ -64,6 +73,12 @@ impl FriLayer {
     /// The challenge alpha must be selected independently
     /// after this layer's commitment has been fixed.
     pub fn fold(&self, alpha: FieldElement) -> Self {
+        assert_eq!(
+            alpha.modulus(),
+            self.domain.modulus(),
+            "Folding challenge belongs to a different field"
+        );
+
         let (next_domain, next_evaluations) =
             self.domain.fold_evaluations(&self.evaluations, alpha);
 
@@ -182,5 +197,16 @@ mod tests {
 
             assert_eq!(layer.domain.size, *expected_size);
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "Folding challenge belongs to a different field")]
+    fn test_fold_rejects_challenge_from_different_field() {
+        let layer = initial_layer();
+
+        let other_field = PrimeField::new(101).unwrap();
+        let alpha = other_field.element(7);
+
+        layer.fold(alpha);
     }
 }
