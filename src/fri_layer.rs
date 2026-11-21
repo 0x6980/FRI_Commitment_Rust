@@ -1,5 +1,5 @@
 use crate::evaluation_domain::EvaluationDomain;
-use crate::field::FieldElement;
+use crate::field::{FieldElement, PrimeField};
 use crate::merkle::{Hash, MerkleProof, MerkleTree};
 
 #[derive(Clone, Debug)]
@@ -23,7 +23,7 @@ impl FriLayer {
 
         for value in &evaluations {
             assert_eq!(
-                value.modulus,
+                value.modulus(),
                 domain.modulus(),
                 "Evaluation belongs to a different field"
             );
@@ -80,7 +80,8 @@ mod tests {
     const P: u64 = 97;
 
     fn fe(value: u64) -> FieldElement {
-        FieldElement::new(value, P)
+        let field = PrimeField::new(P).unwrap();
+        field.element(value)
     }
 
     fn initial_layer() -> FriLayer {

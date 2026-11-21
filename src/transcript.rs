@@ -1,4 +1,4 @@
-use crate::field::FieldElement;
+use crate::field::{FieldElement, PrimeField};
 use sha2::{Digest, Sha256};
 
 /// A simple hash-chain transcript for the educational FRI implementation.
@@ -41,8 +41,8 @@ impl Transcript {
     /// and the supplied label.
     ///
     /// After deriving it, the challenge is absorbed into the transcript.
-    pub fn challenge(&mut self, label: &[u8], modulus: u64) -> FieldElement {
-        assert!(modulus > 1, "Modulus must be greater than 1");
+    pub fn challenge(&mut self, label: &[u8], field: PrimeField) -> FieldElement {
+        let modulus = field.modulus();
 
         let range = 1u128 << 64;
         let limit = range - (range % modulus as u128);
@@ -74,7 +74,6 @@ impl Transcript {
                 .expect("Challenge rejection counter overflow");
         };
 
-        // Absorb the derived challenge so the transcript state advances.
         let mut encoded_challenge = Vec::new();
 
         encoded_challenge.extend_from_slice(b"FRI_TRANSCRIPT_CHALLENGE_RESULT_V1");
@@ -87,9 +86,8 @@ impl Transcript {
 
         self.absorb(&encoded_challenge);
 
-        FieldElement::new(value, modulus)
+        field.element(value)
     }
-
     /// Returns the current transcript state.
     pub fn state(&self) -> [u8; 32] {
         self.state
@@ -160,6 +158,9 @@ mod tests {
     use super::*;
 
     const P: u64 = 97;
+    fn test_field() -> PrimeField {
+        PrimeField::new(97).unwrap()
+    }
 
     #[test]
     fn test_new_transcripts_have_same_initial_state() {
@@ -187,8 +188,9 @@ mod tests {
         first.absorb(b"root-0");
         second.absorb(b"root-0");
 
-        let alpha_first = first.challenge(b"alpha-0", P);
-        let alpha_second = second.challenge(b"alpha-0", P);
+        let field = test_field();
+        let alpha_first = first.challenge(b"alpha-0", field);
+        let alpha_second = second.challenge(b"alpha-0", field);
 
         assert_eq!(alpha_first, alpha_second);
     }
@@ -197,10 +199,10 @@ mod tests {
     fn test_challenge_belongs_to_field() {
         let mut transcript = Transcript::new();
 
-        let alpha = transcript.challenge(b"alpha-0", P);
+        let alpha = transcript.challenge(b"alpha-0", test_field());
 
-        assert_eq!(alpha.modulus, P);
-        assert!(alpha.value < P);
+        assert_eq!(alpha.modulus(), P);
+        assert!(alpha.value() < P);
     }
 
     #[test]
@@ -211,8 +213,9 @@ mod tests {
         first.absorb(b"root-0");
         second.absorb(b"root-0");
 
-        let alpha = first.challenge(b"alpha-0", P);
-        let beta = second.challenge(b"beta-0", P);
+        let field = test_field();
+        let alpha = first.challenge(b"alpha-0", field);
+        let beta = second.challenge(b"beta-0", field);
 
         assert_ne!(alpha, beta);
     }
@@ -222,7 +225,7 @@ mod tests {
         let mut transcript = Transcript::new();
         let initial_state = transcript.state();
 
-        transcript.challenge(b"alpha-0", P);
+        transcript.challenge(b"alpha-0", test_field());
 
         assert_ne!(transcript.state(), initial_state);
     }
@@ -235,8 +238,10 @@ mod tests {
         first.absorb(b"root-A");
         second.absorb(b"root-B");
 
-        let alpha = first.challenge(b"alpha-0", P);
-        let beta = second.challenge(b"alpha-0", P);
+        let field = test_field();
+
+        let alpha = first.challenge(b"alpha-0", field);
+        let beta = second.challenge(b"alpha-0", field);
 
         assert_ne!(alpha, beta);
     }
@@ -244,9 +249,10 @@ mod tests {
     #[test]
     fn test_challenges_in_sequence_are_different() {
         let mut transcript = Transcript::new();
+        let field = test_field();
 
-        let alpha_0 = transcript.challenge(b"alpha-0", P);
-        let alpha_1 = transcript.challenge(b"alpha-1", P);
+        let alpha_0 = transcript.challenge(b"alpha-0", field);
+        let alpha_1 = transcript.challenge(b"alpha-1", field);
 
         assert_ne!(alpha_0, alpha_1);
     }

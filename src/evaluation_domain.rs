@@ -1,4 +1,4 @@
-use crate::field::FieldElement;
+use crate::field::{FieldElement, PrimeField};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EvaluationDomain {
@@ -22,7 +22,7 @@ impl EvaluationDomain {
     pub fn new(generator: FieldElement, size: usize) -> Self {
         assert!(size.is_power_of_two(), "Domain size must be a power of two");
 
-        let one = FieldElement::one(generator.modulus);
+        let one = generator.field().one();
         let minus_one = -one;
 
         if size == 1 {
@@ -43,7 +43,11 @@ impl EvaluationDomain {
     }
 
     pub fn modulus(&self) -> u64 {
-        self.generator.modulus
+        self.generator.modulus()
+    }
+
+    pub fn field(&self) -> PrimeField {
+        self.generator.field()
     }
 
     /// Returns the domain points in natural exponent order:
@@ -52,7 +56,7 @@ impl EvaluationDomain {
     pub fn points(&self) -> Vec<FieldElement> {
         let mut result = Vec::with_capacity(self.size);
 
-        let mut current = FieldElement::one(self.modulus());
+        let mut current = self.generator.field().one();
 
         for _ in 0..self.size {
             result.push(current);
@@ -96,14 +100,14 @@ impl EvaluationDomain {
         );
 
         assert_eq!(
-            alpha.modulus,
+            alpha.modulus(),
             self.modulus(),
             "Challenge belongs to a different field"
         );
 
         for evaluation in evaluations {
             assert_eq!(
-                evaluation.modulus,
+                evaluation.modulus(),
                 self.modulus(),
                 "Evaluation belongs to a different field"
             );
@@ -111,13 +115,15 @@ impl EvaluationDomain {
 
         let half_size = self.size / 2;
 
-        let two_inverse = FieldElement::new(2, self.modulus()).inverse();
+        let field = PrimeField::new(self.modulus()).unwrap();
+
+        let two_inverse = field.element(2).inverse();
 
         let mut folded_evaluations = Vec::with_capacity(half_size);
 
         // x starts at 1 and advances as:
         // 1, omega, omega^2, ...
-        let mut x = FieldElement::one(self.modulus());
+        let mut x = self.generator.field().one();
 
         for i in 0..half_size {
             let fx = evaluations[i];
@@ -160,7 +166,8 @@ mod tests {
     const N: usize = 32;
 
     fn fe(value: u64) -> FieldElement {
-        FieldElement::new(value, P)
+        let field = PrimeField::new(P).unwrap();
+        field.element(value)
     }
 
     fn test_domain() -> EvaluationDomain {

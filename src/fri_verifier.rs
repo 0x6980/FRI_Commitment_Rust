@@ -1,5 +1,5 @@
 use crate::evaluation_domain::EvaluationDomain;
-use crate::field::FieldElement;
+use crate::field::{FieldElement, PrimeField};
 use crate::fri_config::FriConfig;
 use crate::fri_proof::FriProof;
 use crate::merkle::MerkleTree;
@@ -20,7 +20,7 @@ impl FriVerifier {
         config: &FriConfig,
     ) -> bool {
         let initial_size = initial_domain.size;
-        let modulus = initial_domain.modulus();
+        let field = initial_domain.field();
         let generator = initial_domain.generator;
 
         // Validate the initial domain.
@@ -28,11 +28,11 @@ impl FriVerifier {
             return false;
         }
 
-        if generator.pow(initial_size as u64) != FieldElement::one(modulus) {
+        if generator.pow(initial_size as u64) != generator.field().one() {
             return false;
         }
 
-        if generator.pow((initial_size / 2) as u64) != -FieldElement::one(modulus) {
+        if generator.pow((initial_size / 2) as u64) != -generator.field().one() {
             return false;
         }
 
@@ -67,7 +67,7 @@ impl FriVerifier {
         if proof
             .final_evaluations
             .iter()
-            .any(|value| value.modulus != modulus)
+            .any(|value| value.modulus() != field.modulus())
         {
             return false;
         }
@@ -93,9 +93,9 @@ impl FriVerifier {
         let mut transcript = Transcript::new();
 
         transcript.absorb(b"FRI_PROTOCOL_V1");
-        transcript.absorb(&modulus.to_le_bytes());
+        transcript.absorb(&field.modulus().to_le_bytes());
         transcript.absorb(&(initial_size as u64).to_le_bytes());
-        transcript.absorb(&generator.value.to_le_bytes());
+        transcript.absorb(&generator.value().to_le_bytes());
 
         // FRI configuration
         transcript.absorb(b"FRI_CONFIG_V1");
@@ -120,7 +120,7 @@ impl FriVerifier {
         for round in 0..rounds {
             let label = format!("FRI_FOLD_CHALLENGE_ROUND_{}", round);
 
-            let alpha = transcript.challenge(label.as_bytes(), modulus);
+            let alpha = transcript.challenge(label.as_bytes(), field);
 
             challenges.push(alpha);
 
@@ -150,7 +150,7 @@ impl FriVerifier {
             expected_indices.push(index);
         }
 
-        let two_inverse = FieldElement::new(2, modulus).inverse();
+        let two_inverse = field.element(2).inverse();
 
         // Verify every query.
         for (query, expected_index) in proof.queries.iter().zip(expected_indices.iter()) {
@@ -175,9 +175,9 @@ impl FriVerifier {
                 let next_layer_size = current_layer_size / 2;
 
                 // Check field consistency.
-                if opening.value_x.modulus != modulus
-                    || opening.value_minus_x.modulus != modulus
-                    || opening.folded_value.modulus != modulus
+                if opening.value_x.modulus() != field.modulus()
+                    || opening.value_minus_x.modulus() != field.modulus()
+                    || opening.folded_value.modulus() != field.modulus()
                 {
                     return false;
                 }
@@ -289,7 +289,7 @@ impl FriVerifier {
         transcript.absorb(b"FRI_LAYER_COMMITMENT_V1");
         transcript.absorb(&(layer_index as u64).to_le_bytes());
         transcript.absorb(&(layer_size as u64).to_le_bytes());
-        transcript.absorb(&generator.value.to_le_bytes());
+        transcript.absorb(&generator.value().to_le_bytes());
         transcript.absorb(root);
     }
 
@@ -315,7 +315,7 @@ impl FriVerifier {
 
         if final_evaluations
             .iter()
-            .any(|value| value.modulus != modulus)
+            .any(|value| value.modulus() != modulus)
         {
             return false;
         }
@@ -367,7 +367,8 @@ mod tests {
     const QUERY_COUNT: usize = 5;
 
     fn fe(value: u64) -> FieldElement {
-        FieldElement::new(value, P)
+        let field = PrimeField::new(P).unwrap();
+        field.element(value)
     }
 
     fn initial_domain() -> EvaluationDomain {

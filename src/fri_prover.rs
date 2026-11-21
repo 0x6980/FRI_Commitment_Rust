@@ -1,4 +1,4 @@
-use crate::field::FieldElement;
+use crate::field::{FieldElement, PrimeField};
 use crate::fri_config::FriConfig;
 use crate::fri_layer::FriLayer;
 use crate::fri_proof::{FriProof, FriQueryProof, FriRoundQueryProof};
@@ -33,7 +33,8 @@ impl FriProver {
             .rounds(initial_size)
             .expect("Invalid FRI configuration");
 
-        let modulus = initial_layer.domain.modulus();
+        let field = initial_layer.domain.field();
+        let modulus = field.modulus();
         let generator = initial_layer.domain.generator;
 
         let mut transcript = Transcript::new();
@@ -42,7 +43,7 @@ impl FriProver {
         transcript.absorb(b"FRI_PROTOCOL_V1");
         transcript.absorb(&modulus.to_le_bytes());
         transcript.absorb(&(initial_size as u64).to_le_bytes());
-        transcript.absorb(&generator.value.to_le_bytes());
+        transcript.absorb(&generator.value().to_le_bytes());
 
         // FRI configuration
         transcript.absorb(b"FRI_CONFIG_V1");
@@ -59,7 +60,7 @@ impl FriProver {
         for round in 0..rounds {
             let label = format!("FRI_FOLD_CHALLENGE_ROUND_{}", round);
 
-            let alpha = transcript.challenge(label.as_bytes(), modulus);
+            let alpha = transcript.challenge(label.as_bytes(), field);
 
             challenges.push(alpha);
 
@@ -86,7 +87,7 @@ impl FriProver {
 
         transcript.absorb(&(layer.size() as u64).to_le_bytes());
 
-        transcript.absorb(&layer.domain.generator.value.to_le_bytes());
+        transcript.absorb(&layer.domain.generator.value().to_le_bytes());
 
         transcript.absorb(&layer.root());
     }
@@ -228,7 +229,8 @@ mod tests {
     const QUERY_COUNT: usize = 5;
 
     fn fe(value: u64) -> FieldElement {
-        FieldElement::new(value, P)
+        let field = PrimeField::new(P).unwrap();
+        field.element(value)
     }
 
     fn test_config(final_domain_size: usize) -> FriConfig {
@@ -285,8 +287,8 @@ mod tests {
         let prover = FriProver::run(initial_layer(), test_config(1));
 
         for alpha in &prover.challenges {
-            assert_eq!(alpha.modulus, P);
-            assert!(alpha.value < P);
+            assert_eq!(alpha.modulus(), P);
+            assert!(alpha.value() < P);
         }
     }
 

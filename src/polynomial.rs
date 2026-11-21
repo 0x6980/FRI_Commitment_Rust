@@ -1,4 +1,4 @@
-use crate::field::FieldElement;
+use crate::field::{FieldElement, PrimeField};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Polynomial {
@@ -16,15 +16,15 @@ impl Polynomial {
             panic!("A polynomial must have at least one coefficient");
         }
 
-        let modulus = coefficients[0].modulus;
+        let field = coefficients[0].field();
 
         for coefficient in &coefficients {
             assert_eq!(
-                coefficient.modulus, modulus,
+                coefficient.field(),
+                field,
                 "All coefficients must belong to the same field"
             );
         }
-
         // Remove unnecessary trailing zero coefficients.
         while coefficients.len() > 1 && coefficients.last().unwrap().is_zero() {
             coefficients.pop();
@@ -33,20 +33,24 @@ impl Polynomial {
         Self { coefficients }
     }
 
-    pub fn zero(modulus: u64) -> Self {
-        Self::new(vec![FieldElement::zero(modulus)])
+    pub fn zero(field: PrimeField) -> Self {
+        Self::new(vec![field.zero()])
     }
 
-    pub fn one(modulus: u64) -> Self {
-        Self::new(vec![FieldElement::one(modulus)])
+    pub fn one(field: PrimeField) -> Self {
+        Self::new(vec![field.one()])
     }
 
     pub fn degree(&self) -> usize {
         self.coefficients.len() - 1
     }
 
+    pub fn field(&self) -> PrimeField {
+        self.coefficients[0].field()
+    }
+
     pub fn modulus(&self) -> u64 {
-        self.coefficients[0].modulus
+        self.field().modulus()
     }
 
     /// Evaluates the polynomial using Horner's method.
@@ -58,12 +62,12 @@ impl Polynomial {
     /// c0 + X*(c1 + X*(c2 + ...))
     pub fn evaluate(&self, x: FieldElement) -> FieldElement {
         assert_eq!(
-            x.modulus,
-            self.modulus(),
+            x.field(),
+            self.field(),
             "Evaluation point belongs to a different field"
         );
 
-        let mut result = FieldElement::zero(self.modulus());
+        let mut result = x.field().zero();
 
         for coefficient in self.coefficients.iter().rev() {
             result = result * x + *coefficient;
@@ -79,7 +83,7 @@ impl Polynomial {
     /// Returns:
     /// (f_even, f_odd)
     pub fn split_even_odd(&self) -> (Polynomial, Polynomial) {
-        let modulus = self.modulus();
+        let field = self.field();
 
         let mut even_coefficients = Vec::new();
         let mut odd_coefficients = Vec::new();
@@ -93,11 +97,11 @@ impl Polynomial {
         }
 
         if even_coefficients.is_empty() {
-            even_coefficients.push(FieldElement::zero(modulus));
+            even_coefficients.push(field.zero());
         }
 
         if odd_coefficients.is_empty() {
-            odd_coefficients.push(FieldElement::zero(modulus));
+            odd_coefficients.push(field.zero());
         }
 
         (
@@ -115,15 +119,14 @@ impl Polynomial {
     /// g(Y) = f_even(Y) + alpha * f_odd(Y)
     pub fn fold(&self, alpha: FieldElement) -> Polynomial {
         assert_eq!(
-            alpha.modulus,
-            self.modulus(),
+            alpha.field(),
+            self.field(),
             "Challenge belongs to a different field"
         );
 
         let (even_poly, odd_poly) = self.split_even_odd();
 
-        let modulus = self.modulus();
-        let zero = FieldElement::zero(modulus);
+        let zero = alpha.field().zero();
 
         let max_len = even_poly
             .coefficients
@@ -156,33 +159,35 @@ impl Polynomial {
             "Interpolation requires at least one point"
         );
 
-        let modulus = points[0].0.modulus;
+        let field = points[0].0.field();
 
         // Check that all coordinates belong to the same field.
         for (x, y) in points {
             assert_eq!(
-                x.modulus, modulus,
+                x.field(),
+                field,
                 "All x-coordinates must belong to the same field"
             );
 
             assert_eq!(
-                y.modulus, modulus,
+                y.field(),
+                field,
                 "All y-coordinates must belong to the same field"
             );
         }
 
-        let mut result = vec![FieldElement::zero(modulus); points.len()];
+        let mut result = vec![field.zero(); points.len()];
 
         for i in 0..points.len() {
             let (x_i, y_i) = points[i];
 
             // Construct the numerator:
             // product (X - x_j), for j != i.
-            let mut basis = vec![FieldElement::one(modulus)];
+            let mut basis = vec![field.one()];
 
             // Construct the denominator:
             // product (x_i - x_j), for j != i.
-            let mut denominator = FieldElement::one(modulus);
+            let mut denominator = field.one();
 
             for j in 0..points.len() {
                 if i == j {
@@ -191,7 +196,7 @@ impl Polynomial {
 
                 let x_j = points[j].0;
 
-                let mut next_basis = vec![FieldElement::zero(modulus); basis.len() + 1];
+                let mut next_basis = vec![field.zero(); basis.len() + 1];
 
                 // Multiply the current basis by (X - x_j).
                 for k in 0..basis.len() {
@@ -230,7 +235,8 @@ mod tests {
     const P: u64 = 97;
 
     fn fe(value: u64) -> FieldElement {
-        FieldElement::new(value, P)
+        let field = PrimeField::new(P).unwrap();
+        field.element(value)
     }
 
     #[test]
@@ -362,7 +368,8 @@ mod interpolation_tests {
     const P: u64 = 97;
 
     fn fe(value: u64) -> FieldElement {
-        FieldElement::new(value, P)
+        let field = PrimeField::new(P).unwrap();
+        field.element(value)
     }
 
     #[test]

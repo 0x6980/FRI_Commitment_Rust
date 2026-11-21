@@ -1,4 +1,4 @@
-use crate::field::FieldElement;
+use crate::field::{FieldElement, PrimeField};
 use sha2::{Digest, Sha256};
 
 /// A SHA-256 digest.
@@ -25,7 +25,7 @@ pub struct MerkleProof {
 /// The last level contains exactly one hash: the root.
 #[derive(Clone, Debug)]
 pub struct MerkleTree {
-    pub levels: Vec<Vec<Hash>>,
+    levels: Vec<Vec<Hash>>,
 }
 
 impl MerkleTree {
@@ -43,11 +43,12 @@ impl MerkleTree {
             "Number of leaves must be a power of two"
         );
 
-        let modulus = values[0].modulus;
+        let modulus = values[0].modulus();
 
         for value in values {
             assert_eq!(
-                value.modulus, modulus,
+                value.modulus(),
+                modulus,
                 "All leaves must belong to the same field"
             );
         }
@@ -170,12 +171,22 @@ fn hash_leaf(value: &FieldElement) -> Hash {
     // Domain separation: 0x00 identifies a leaf.
     hasher.update([0x00]);
 
-    hasher.update(value.modulus.to_le_bytes());
-    hasher.update(value.value.to_le_bytes());
+    hasher.update(value.modulus().to_le_bytes());
+    hasher.update(value.value().to_le_bytes());
 
     hasher.finalize().into()
 }
+fn hash_leaf(value: &FieldElement) -> Hash {
+    let mut hasher = Sha256::new();
 
+    // Domain separation: 0x00 identifies a leaf.
+    hasher.update([0x00]);
+
+    hasher.update(value.modulus().to_le_bytes());
+    hasher.update(value.value().to_le_bytes());
+
+    hasher.finalize().into()
+}
 /// Hashes an internal Merkle node.
 ///
 /// Encoding:
@@ -199,7 +210,8 @@ mod tests {
     const P: u64 = 97;
 
     fn fe(value: u64) -> FieldElement {
-        FieldElement::new(value, P)
+        let field = PrimeField::new(P).unwrap();
+        field.element(value)
     }
 
     fn test_values(count: usize) -> Vec<FieldElement> {
@@ -372,7 +384,9 @@ mod tests {
         const P: u64 = 97;
         const N: usize = 32;
 
-        let fe = |value| FieldElement::new(value, P);
+        let field = PrimeField::new(P).unwrap();
+
+        let fe = |value| field.element(value);
 
         // f(X) = 3 + 2X + 5X^2 + 4X^3 + 7X^4 + 6X^5
         let f = Polynomial::new(vec![fe(3), fe(2), fe(5), fe(4), fe(7), fe(6)]);
@@ -442,5 +456,19 @@ mod tests {
         // It must match the corresponding entry in the
         // folded evaluation vector.
         assert_eq!(folded_value, folded_evaluations[query_index]);
+    }
+
+    #[test]
+    fn test_reject_modified_in_range_index() {
+        let values = test_values(8);
+
+        let tree = MerkleTree::new(&values);
+        let root = tree.root();
+
+        let mut proof = tree.prove(2).unwrap();
+
+        proof.index = 3;
+
+        assert!(!MerkleTree::verify(values[2], &proof, &root));
     }
 }

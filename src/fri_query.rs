@@ -1,5 +1,5 @@
 use crate::evaluation_domain::EvaluationDomain;
-use crate::field::FieldElement;
+use crate::field::{FieldElement, PrimeField};
 use crate::fri_layer::FriLayer;
 use crate::merkle::{Hash, MerkleProof, MerkleTree};
 
@@ -94,10 +94,10 @@ pub fn verify_query(
 
     let modulus = domain.modulus();
 
-    if alpha.modulus != modulus
-        || proof.value_x.modulus != modulus
-        || proof.value_minus_x.modulus != modulus
-        || proof.folded_value.modulus != modulus
+    if alpha.modulus() != modulus
+        || proof.value_x.modulus() != modulus
+        || proof.value_minus_x.modulus() != modulus
+        || proof.folded_value.modulus() != modulus
     {
         return false;
     }
@@ -147,7 +147,9 @@ pub fn verify_query(
         return false;
     }
 
-    let two_inverse = FieldElement::new(2, modulus).inverse();
+    let field = PrimeField::new(alpha.modulus()).unwrap();
+
+    let two_inverse = field.element(2).inverse();
 
     // Compute:
     //
@@ -172,7 +174,8 @@ mod tests {
     const N: usize = 32;
 
     fn fe(value: u64) -> FieldElement {
-        FieldElement::new(value, P)
+        let field = PrimeField::new(P).unwrap();
+        field.element(value)
     }
 
     fn initial_layer() -> FriLayer {

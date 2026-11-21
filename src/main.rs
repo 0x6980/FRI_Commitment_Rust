@@ -11,13 +11,15 @@ mod polynomial;
 mod transcript;
 
 use evaluation_domain::EvaluationDomain;
-use field::FieldElement;
+use field::{FieldElement, PrimeField};
 use polynomial::Polynomial;
 
 fn main() {
     let p = 97;
 
-    let fe = |value| FieldElement::new(value, p);
+    let field = PrimeField::new(p).unwrap();
+
+    let fe = |value| field.element(value);
 
     // f(X) = 3 + 2X + 5X^2 + 4X^3 + 7X^4 + 6X^5
     let f = Polynomial::new(vec![fe(3), fe(2), fe(5), fe(4), fe(7), fe(6)]);
@@ -45,7 +47,7 @@ fn main() {
 
     println!("Folded evaluations: {}", folded_evaluations.len());
 
-    println!("New domain generator: {}", folded_domain.generator.value);
+    println!("New domain generator: {}", folded_domain.generator.value());
 
     println!("Folded polynomial: {:?}", f.fold(alpha));
 }
